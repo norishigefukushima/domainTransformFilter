@@ -364,7 +364,8 @@ inline __m128 _mm_powel_ps(__m128 a, __m128 b)
 }
 
 //refine rcp
-inline __m128 _mm_rcp_22bit_ps( const __m128& a ) {
+inline __m128 _mm_rcp_22bit_ps(__m128 a )
+{
 	__m128 xm0 = a;
 	__m128 xm1 = _mm_rcp_ps(xm0);
 	xm0 = _mm_mul_ps( _mm_mul_ps( xm0, xm1 ), xm1 );
@@ -375,7 +376,7 @@ inline __m128 _mm_rcp_22bit_ps( const __m128& a ) {
 // Fast SSE pow for range [0, 1]
 // Adapted from C. Schlick with one more iteration each for exp(x) and ln(x)
 // 8 muls, 5 adds, 1 rcp
-inline __m128 _mm_pow01_ps(const __m128& x,const __m128& y)
+inline __m128 _mm_pow01_ps(__m128 x, __m128 y)
 {
 	static const __m128 fourOne = _mm_set1_ps(1.0f);
 	static const __m128 fourHalf = _mm_set1_ps(0.5f);
