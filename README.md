@@ -1,8 +1,11 @@
 domainTransformFilter
 =====================
 
-domain transform filter for opencv
+The code is implimentation of domain transform filter for OpenCV.  
+The code is parallelized by Intel TBB or OpenMP over c cv::ParallelLoopBody class in OpenCV.  
+Also, the code is vectorized by SIMD SSE4.2.   
 
+*Reference  
 Eduardo S. L. Gastal and Manuel M. Oliveira. "Domain Transform for Edge-Aware Image and Video Processing". ACM Transactions on Graphics. Volume 30 (2011), Number 4, Proceedings of SIGGRAPH 2011, Article 69.
 http://inf.ufrgs.br/~eslgastal/DomainTransform/
 
