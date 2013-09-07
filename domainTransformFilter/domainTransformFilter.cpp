@@ -11,7 +11,6 @@ using namespace fmath;
 
 #define SSE_FUNC
 
-
 //color transform functions
 //future: place 2 bgr SSE fucntion
 
@@ -210,11 +209,111 @@ void cvtColorPLANE2BGR_(const Mat& src, Mat& dest, int depth)
 	merge(v,dest);
 }
 
+void cvtColorPLANE2BGR_8u_align(const Mat& src, Mat& dest)
+{
+	int width = src.cols;
+	int height = src.rows/3;
+
+	if(dest.empty()) dest.create(Size(width,height),CV_8UC3);
+	else if(width!=dest.cols || height!=dest.rows) dest.create(Size(width,height),CV_8UC3);
+	else if(dest.type()!=CV_8UC3) dest.create(Size(width,height),CV_8UC3);
+
+	uchar* B = (uchar*)src.ptr<uchar>(0);
+	uchar* G = (uchar*)src.ptr<uchar>(height);
+	uchar* R = (uchar*)src.ptr<uchar>(2*height);
+
+	uchar* D = (uchar*)dest.ptr<uchar>(0);
+
+	int ssecount = width*height*3/48;
+
+	const __m128i mask1 = _mm_setr_epi8(0, 11, 6, 1, 12, 7, 2, 13, 8, 3, 14, 9, 4, 15, 10, 5);
+	const __m128i mask2 = _mm_setr_epi8(5, 0, 11, 6, 1, 12, 7, 2, 13, 8, 3, 14, 9, 4, 15, 10);
+	const __m128i mask3 = _mm_setr_epi8(10, 5, 0, 11, 6, 1, 12, 7, 2, 13, 8, 3, 14, 9, 4, 15);
+	const __m128i bmask1 = _mm_setr_epi8(0,255,255,0,255,255,0,255,255,0,255,255,0,255,255,0);
+	const __m128i bmask2 = _mm_setr_epi8(255,255,0,255,255,0,255,255,0,255,255,0,255,255,0,255);
+
+	for(int i=ssecount;i--;)
+	{
+		__m128i a = _mm_load_si128((const __m128i*)B);
+		__m128i b = _mm_load_si128((const __m128i*)G);
+		__m128i c = _mm_load_si128((const __m128i*)R);
+
+		a = _mm_shuffle_epi8(a,mask1);
+		b = _mm_shuffle_epi8(b,mask2);
+		c = _mm_shuffle_epi8(c,mask3);
+		_mm_stream_si128((__m128i*)(D),_mm_blendv_epi8(c,_mm_blendv_epi8(a,b,bmask1),bmask2));
+		_mm_stream_si128((__m128i*)(D+16),_mm_blendv_epi8(b,_mm_blendv_epi8(a,c,bmask2),bmask1));		
+		_mm_stream_si128((__m128i*)(D+32),_mm_blendv_epi8(c,_mm_blendv_epi8(b,a,bmask2),bmask1));
+
+		D+=48;
+		B+=16;
+		G+=16;
+		R+=16;
+	}
+}
+
+void cvtColorPLANE2BGR_8u(const Mat& src, Mat& dest)
+{
+	int width = src.cols;
+	int height = src.rows/3;
+
+	if(dest.empty()) dest.create(Size(width,height),CV_8UC3);
+	else if(width!=dest.cols || height!=dest.rows) dest.create(Size(width,height),CV_8UC3);
+	else if(dest.type()!=CV_8UC3) dest.create(Size(width,height),CV_8UC3);
+
+	uchar* B = (uchar*)src.ptr<uchar>(0);
+	uchar* G = (uchar*)src.ptr<uchar>(height);
+	uchar* R = (uchar*)src.ptr<uchar>(2*height);
+
+	uchar* D = (uchar*)dest.ptr<uchar>(0);
+
+	int ssecount = width*height*3/48;
+	int rem = width*height*3-ssecount*48;
+
+	const __m128i mask1 = _mm_setr_epi8(0, 11, 6, 1, 12, 7, 2, 13, 8, 3, 14, 9, 4, 15, 10, 5);
+	const __m128i mask2 = _mm_setr_epi8(5, 0, 11, 6, 1, 12, 7, 2, 13, 8, 3, 14, 9, 4, 15, 10);
+	const __m128i mask3 = _mm_setr_epi8(10, 5, 0, 11, 6, 1, 12, 7, 2, 13, 8, 3, 14, 9, 4, 15);
+	const __m128i bmask1 = _mm_setr_epi8(0,255,255,0,255,255,0,255,255,0,255,255,0,255,255,0);
+	const __m128i bmask2 = _mm_setr_epi8(255,255,0,255,255,0,255,255,0,255,255,0,255,255,0,255);
+
+	for(int i=ssecount;i--;)
+	{
+		__m128i a = _mm_loadu_si128((const __m128i*)B);
+		__m128i b = _mm_loadu_si128((const __m128i*)G);
+		__m128i c = _mm_loadu_si128((const __m128i*)R);
+
+		a = _mm_shuffle_epi8(a,mask1);
+		b = _mm_shuffle_epi8(b,mask2);
+		c = _mm_shuffle_epi8(c,mask3);
+		
+		_mm_storeu_si128((__m128i*)(D),_mm_blendv_epi8(c,_mm_blendv_epi8(a,b,bmask1),bmask2));
+		_mm_storeu_si128((__m128i*)(D+16),_mm_blendv_epi8(b,_mm_blendv_epi8(a,c,bmask2),bmask1));		
+		_mm_storeu_si128((__m128i*)(D+32),_mm_blendv_epi8(c,_mm_blendv_epi8(b,a,bmask2),bmask1));
+
+		D+=48;
+		B+=16;
+		G+=16;
+		R+=16;
+	}
+	for(int i=rem;i--;)
+	{
+		D[0]=*B;
+		D[1]=*G;
+		D[2]=*R;
+		D+=3;
+		B++,G++,R++;
+	}
+}
+
 void cvtColorPLANE2BGR(const Mat& src, Mat& dest)
 {
 	if(src.depth()==CV_8U)
 	{
-		cvtColorPLANE2BGR_<uchar>(src, dest, CV_8U);	
+		//cvtColorPLANE2BGR_<uchar>(src, dest, CV_8U);	
+		if(src.cols%16==0)
+			cvtColorPLANE2BGR_8u_align(src, dest);	
+		else
+			cvtColorPLANE2BGR_8u(src, dest);	
 	}
 	else if(src.depth()==CV_16U)
 	{
@@ -237,7 +336,6 @@ void cvtColorPLANE2BGR(const Mat& src, Mat& dest)
 		cvtColorPLANE2BGR_<double>(src, dest, CV_64F);
 	}
 }
-
 
 //pow function
 
