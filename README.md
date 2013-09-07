@@ -8,7 +8,7 @@ http://inf.ufrgs.br/~eslgastal/DomainTransform/
 
 -----------------------------------------------
 
-'void domainTransformFilter(cv::Mat& img, cv::Mat& out, double sigma_s, double sigma_r, int maxiter, int method=DTF_RF)'  
+void domainTransformFilter(cv::Mat& img, cv::Mat& out, double sigma_s, double sigma_r, int maxiter, int method=DTF_RF)
  img: src image  
  out: dest image  
  sigma_s: sigma of space  
