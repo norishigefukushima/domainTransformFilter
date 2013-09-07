@@ -1,6 +1,9 @@
 domainTransformFilter
 =====================
 
+Introduction
+------------
+
 The code is OpenCV implimentation of domain transform filter, which is fast edge keep filter for smoothing.  
 The code is parallelized by Intel TBB or OpenMP over c cv::ParallelLoopBody class in OpenCV, thus requirement of OpenCV version is 2.45 or later.  
 Also, the code is vectorized by SIMD SSE4.2.   
@@ -9,8 +12,9 @@ Also, the code is vectorized by SIMD SSE4.2.
 Eduardo S. L. Gastal and Manuel M. Oliveira. "Domain Transform for Edge-Aware Image and Video Processing". ACM Transactions on Graphics. Volume 30 (2011), Number 4, Proceedings of SIGGRAPH 2011, Article 69.
 http://inf.ufrgs.br/~eslgastal/DomainTransform/
 
------------------------------------------------
-function document
+
+Usage
+-----
 
 void domainTransformFilter(cv::Mat& img, cv::Mat& out, double sigma_s, double sigma_r, int maxiter, int method=DTF_RF)
  img: src image  
@@ -26,8 +30,15 @@ typedef enum
 	DTF_NC=1,//Normalized Convolution  
 	DTF_IC=1,//Interpolated Convolution  
 }DTF_METHOD;  
-------------------------------------------------------
-Result
+
+
+Results
+------
+
+Exsample of test results on core i5-2450M 2.5GHz, Windows 7 64 bit with Visual Studio 2012 are as follows;  
+
+Computational time is about 20 ms for 505x757 RGB image.  
+Filtered image are as follows;  
 
 ![input image](domainTransformFilter/statue.png "Input image")  
 Input image  
@@ -35,8 +46,7 @@ Input image
 ![smooth image](domainTransformFilter/smooth.png "Smooth image")  
 Smooth image  
 
-
-------------------------------------------------------
+-------------------------------------------------------------------------------------
 This code is forked from https://github.com/tatsy/ImageProcessing .  
 pow operations are optimized by fmath.hpp (https://github.com/herumi/fmath) .  
 
