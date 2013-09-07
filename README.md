@@ -8,6 +8,11 @@ The code is OpenCV implimentation of domain transform filter, which is fast edge
 The code is parallelized by Intel TBB or OpenMP over c cv::ParallelLoopBody class in OpenCV, thus requirement of OpenCV version is 2.45 or later.  
 Also, the code is vectorized by SIMD SSE4.2.   
 
+Currentry, two demos, which are smoothing and detail enhancement demo, are called in the program.  
+Both demos are quited by 'q' or ESC key.   
+ 
+
+
 *Reference  
 Eduardo S. L. Gastal and Manuel M. Oliveira. "Domain Transform for Edge-Aware Image and Video Processing". ACM Transactions on Graphics. Volume 30 (2011), Number 4, Proceedings of SIGGRAPH 2011, Article 69.
 http://inf.ufrgs.br/~eslgastal/DomainTransform/
@@ -45,6 +50,9 @@ Input image
 
 ![smooth image](domainTransformFilter/smooth.png "Smooth image")  
 Smooth image  
+
+![smooth image](domainTransformFilter/detail.png "Detail enhanced image")  
+Detail enhanced image  
 
 -------------------------------------------------------------------------------------
 This code is forked from https://github.com/tatsy/ImageProcessing .  
