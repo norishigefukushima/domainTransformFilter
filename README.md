@@ -1,14 +1,13 @@
 domainTransformFilter
 =====================
 
-The code is implimentation of domain transform filter for OpenCV.  
-The code is parallelized by Intel TBB or OpenMP over c cv::ParallelLoopBody class in OpenCV.  
+The code is OpenCV implimentation of domain transform filter, which is fast edge keep filter for smoothing.  
+The code is parallelized by Intel TBB or OpenMP over c cv::ParallelLoopBody class in OpenCV, thus requirement of OpenCV version is 2.45 or later.  
 Also, the code is vectorized by SIMD SSE4.2.   
 
 *Reference  
 Eduardo S. L. Gastal and Manuel M. Oliveira. "Domain Transform for Edge-Aware Image and Video Processing". ACM Transactions on Graphics. Volume 30 (2011), Number 4, Proceedings of SIGGRAPH 2011, Article 69.
 http://inf.ufrgs.br/~eslgastal/DomainTransform/
-
 
 -----------------------------------------------
 function document
@@ -27,7 +26,14 @@ typedef enum
 	DTF_NC=1,//Normalized Convolution  
 	DTF_IC=1,//Interpolated Convolution  
 }DTF_METHOD;  
+------------------------------------------------------
+Result
 
+![input image](domainTransformFilter/statue.png "Input image")  
+Input image  
+
+![smooth image](domainTransformFilter/smooth.png "Smooth image")  
+Smooth image  
 
 
 ------------------------------------------------------
