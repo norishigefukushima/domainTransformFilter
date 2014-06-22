@@ -634,9 +634,12 @@ public:
 
 				for(int x=width-1;x--; )
 				{	
-					*b = (1.f - *p) * *b + *p * *(b-1);
-					*g = (1.f - *p) * *g + *p * *(g-1);
-					*r = (1.f - *p) * *r + *p * *(r-1);
+					//*b = (1.f - *p) * *b + *p * *(b-1);
+					//*g = (1.f - *p) * *g + *p * *(g-1);
+					//*r = (1.f - *p) * *r + *p * *(r-1);
+					*b += *p * (*(b-1) -*b);
+					*g += *p * (*(g-1) -*g);
+					*r += *p * (*(r-1) -*r);
 					p++;
 					b++;r++;g++;
 				}
@@ -644,9 +647,12 @@ public:
 				b-=2;r-=2;g-=2;
 				for(int x=width-1;x--; )
 				{
-					*b = (1.f - *p) * *b + *p * *(b+1);
-					*g = (1.f - *p) * *g + *p * *(g+1);
-					*r = (1.f - *p) * *r + *p * *(r+1);
+					//*b = (1.f - *p) * *b + *p * *(b+1);
+					//*g = (1.f - *p) * *g + *p * *(g+1);
+					//*r = (1.f - *p) * *r + *p * *(r+1);
+					*b +=*p *(*(b+1)-*b);
+					*g +=*p *(*(g+1)-*g);
+					*r +=*p *(*(r+1)-*r);
 					p--;
 					b--;r--;g--;
 				}
@@ -941,10 +947,298 @@ public:
 			}
 		}
 	}
-
 };
 
 
+class DomainTransformCT_32F_Invoker : public cv::ParallelLoopBody
+{
+	float a;
+	float ratio;
+	int dim;
+	Mat* img;
+	Mat* dctx;
+	Mat* dcty;
+public:
+	DomainTransformCT_32F_Invoker(Mat& img_, Mat& dctx_, Mat& dcty_, float a_, float ratio_, int dim_) :
+		img(&img_), dctx(& dctx_), dcty(& dcty_), a(a_), ratio(ratio_), dim(dim_)
+	{
+	}
+
+	~DomainTransformCT_32F_Invoker()
+	{
+		/*
+		int width = img->cols;
+		int height = img->rows/dim;
+		int ssewidth = ((width)/4);
+
+#ifdef SSE_FUNC
+		const int CV_DECL_ALIGNED(16) v32f_absmask[] = { 0x7fffffff, 0x7fffffff, 0x7fffffff, 0x7fffffff };
+		const __m128 mratio = _mm_set1_ps(ratio);
+		const __m128 ones = _mm_set1_ps(1.f);
+		const __m128 ma = _mm_set1_ps(a);
+#endif
+
+		// for last line
+		if(dim==1)
+		{
+
+#ifdef SSE_FUNC
+			float* s = img->ptr<float>(height-1);
+			float* dx = dctx->ptr<float>(height-1);
+			for(int x=ssewidth; x--;)
+			{
+				__m128 ms = _mm_load_ps(s);
+				__m128 msp = _mm_loadu_ps(s+1);
+
+				__m128 w =  _mm_and_ps(_mm_sub_ps(ms,msp), *(const __m128*)v32f_absmask);
+				__m128 d = _mm_pow_ps(ma,_mm_add_ps(ones, _mm_mul_ps(mratio,w)));
+				_mm_stream_ps(dx,d);
+
+				s+=4;
+				dx+=4;
+			}
+#else
+			float* v = img->ptr<float>(height-1);
+
+			float* dx = dctx->ptr<float>(height-1);
+			for(int x=0; x<width-1; x++)
+			{
+				float accumx = 0.0f;
+				accumx += abs(v[x]-v[x+1]);
+
+#ifdef USE_FAST_POW
+				*dx = (float)fastPow(a, 1.0f + ratio * accumx); 
+#else
+				*dx = (float)cv::pow(a, 1.0f + ratio * accumx); 
+#endif
+				dx++;
+			}
+#endif
+		}
+		else if(dim==3)
+		{
+			const int istep = height*width;
+			float* b = img->ptr<float>(height-1);
+			float* g = b+istep;
+			float* r = g+istep;
+
+			float* dx = dctx->ptr<float>(height-1);
+
+#ifdef SSE_FUNC
+			for(int x=ssewidth; x--;)
+			{
+				__m128 ms = _mm_load_ps(b);
+				__m128 msp = _mm_loadu_ps(b+1);//h diff
+				__m128 w =  _mm_and_ps(_mm_sub_ps(ms,msp), *(const __m128*)v32f_absmask);
+
+				ms = _mm_load_ps(g);
+				msp = _mm_loadu_ps(g+1);//h diff
+				w =  _mm_add_ps(w, _mm_and_ps(_mm_sub_ps(ms,msp), *(const __m128*)v32f_absmask));
+
+				ms = _mm_load_ps(r);
+				msp = _mm_loadu_ps(r+1);//h diff
+				w =  _mm_add_ps(w, _mm_and_ps(_mm_sub_ps(ms,msp), *(const __m128*)v32f_absmask));
+
+				_mm_stream_ps(dx, _mm_pow_ps(ma,_mm_add_ps(ones, _mm_mul_ps(mratio,w))));
+
+				b+=4;
+				g+=4;
+				r+=4;
+				dx+=4;
+			}
+#else
+			for(int x=0; x<width-1; x++)
+			{
+				float accumx = 0.0f;
+				accumx += abs(b[x]-b[x+1]);
+				accumx += abs(g[x]-g[x+1]);
+				accumx += abs(r[x]-r[x+1]);
+
+#ifdef USE_FAST_POW
+				*dx = (float)fastPow(a, 1.0f + ratio * accumx); 
+#else
+				*dx = (float)cv::pow(a, 1.0f + ratio * accumx); 
+#endif
+				dx++;
+			}
+#endif
+		}
+		*/
+	}
+
+	virtual void operator() (const Range& range) const
+	{
+		int width = img->cols;
+		int height = img->rows/dim;
+		const int step = width;
+		int ssewidth = ((width)/4);
+
+#ifdef SSE_FUNC
+		const int CV_DECL_ALIGNED(16) v32f_absmask[] = { 0x7fffffff, 0x7fffffff, 0x7fffffff, 0x7fffffff };
+		const __m128 mratio = _mm_set1_ps(ratio);
+		const __m128 ones = _mm_set1_ps(1.f);
+		const __m128 ma = _mm_set1_ps(a);
+#endif
+
+		if(dim==1)
+		{
+
+			for(int y = range.start; y != range.end; y++)
+			{
+#ifdef SSE_FUNC
+				float* s = img->ptr<float>(y);
+
+				float* dx = dctx->ptr<float>(y);
+				float* dy = dcty->ptr<float>(y);
+
+				for(int x=0; x<ssewidth; x++)
+				{
+					const __m128 ms = _mm_load_ps(s);
+					__m128 msp = _mm_loadu_ps(s+1);//h diff
+
+					__m128 w =  _mm_and_ps(_mm_sub_ps(ms,msp), *(const __m128*)v32f_absmask);
+					__m128 d = _mm_pow_ps(ma,_mm_add_ps(ones, _mm_mul_ps(mratio,w)));
+					_mm_stream_ps(dx,d);
+
+					msp = _mm_load_ps(s+step);//v diff
+					w =  _mm_and_ps(_mm_sub_ps(ms,msp), *(const __m128*)v32f_absmask);
+					d = _mm_pow_ps(ma,_mm_add_ps(ones, _mm_mul_ps(mratio,w)));
+
+					_mm_stream_ps(dy,d);
+
+					s+=4;
+					dx+=4;
+					dy+=4;
+				}
+#else
+				float* v = img->ptr<float>(y);
+
+				float* dx = dctx->ptr<float>(y);
+				float* dy = dcty->ptr<float>(y);
+				for(int x=0; x<width-1; x++)
+				{
+					float accumx = 0.0f;
+					float accumy = 0.0f;
+					accumx += abs(v[x]-v[x+1]);
+					accumy += abs(v[x]-v[x+width]);
+
+#ifdef USE_FAST_POW
+					*dx = (float)fastPow(a, 1.0f + ratio * accumx); 
+					*dy = (float)fastPow(a, 1.0f + ratio * accumy); 
+#else
+					*dx = (float)cv::pow(a, 1.0f + ratio * accumx); 
+					*dy = (float)cv::pow(a, 1.0f + ratio * accumy); 
+#endif
+					dx++;
+					dy++;
+				}
+				float accumy = 0.0f;
+				accumy += abs(v[width-1]-v[width-1+width]);
+#ifdef USE_FAST_POW
+				*dy = (float)fastPow(a, 1.0f + ratio * accumy); 
+#else
+				*dy = (float)cv::pow(a, 1.0f + ratio * accumy); 
+#endif
+#endif
+			}
+
+		}
+		else if(dim==3)
+		{
+			const int istep = height*width;
+
+			for(int y = range.start; y != range.end; y++)
+			{
+#ifdef SSE_FUNC
+				float* b = img->ptr<float>(y);
+				float* g = b+istep;
+				float* r = g+istep;
+
+				float* dx = dctx->ptr<float>(y);
+				float* dy = dcty->ptr<float>(y);
+
+				for(int x=0; x<ssewidth; x++)
+				{
+
+					/*for(int n=0;n<4;n++)
+					{
+					dx[n]=pow(a, 1.f + ratio*(abs(b[n]-b[n+1])+abs(g[n]-g[n+1])+abs(r[n]-r[n+1])));
+					dy[n]=pow(a, 1.f + ratio*(abs(b[n]-b[n+step])+abs(g[n]-g[n+step])+abs(r[n]-r[n+step])));
+					}*/
+
+					__m128 ms = _mm_load_ps(b);
+					__m128 msp = _mm_loadu_ps(b+1);//h diff
+					__m128 w =  _mm_and_ps(_mm_sub_ps(ms,msp), *(const __m128*)v32f_absmask);
+
+					__m128 msv = _mm_load_ps(b+step);//v diff
+					__m128 h =  _mm_and_ps(_mm_sub_ps(ms,msv), *(const __m128*)v32f_absmask);
+
+					ms = _mm_load_ps(g);
+					msp = _mm_loadu_ps(g+1);//h diff
+					w =  _mm_add_ps(w, _mm_and_ps(_mm_sub_ps(ms,msp), *(const __m128*)v32f_absmask));
+
+					msv = _mm_load_ps(g+step);//v diff
+					h =  _mm_add_ps(h, _mm_and_ps(_mm_sub_ps(ms,msv), *(const __m128*)v32f_absmask));
+
+					ms = _mm_load_ps(r);
+					msp = _mm_loadu_ps(r+1);//h diff
+					w =  _mm_add_ps(w, _mm_and_ps(_mm_sub_ps(ms,msp), *(const __m128*)v32f_absmask));
+
+					msv = _mm_load_ps(r+step);//v diff
+					h =  _mm_add_ps(h, _mm_and_ps(_mm_sub_ps(ms,msv), *(const __m128*)v32f_absmask));
+
+					_mm_stream_ps(dx, _mm_pow_ps(ma,_mm_add_ps(ones, _mm_mul_ps(mratio,w))));
+					_mm_stream_ps(dy, _mm_pow_ps(ma,_mm_add_ps(ones, _mm_mul_ps(mratio,h))));
+
+					b+=4;
+					g+=4;
+					r+=4;
+					dx+=4;
+					dy+=4;
+				}
+#else
+				float* b = img->ptr<float>(y);
+				float* g = b+istep;
+				float* r = g+istep;
+
+				float* dx = dctx->ptr<float>(y);
+				float* dy = dcty->ptr<float>(y);
+
+				for(int x=0; x<width-1; x++)
+				{
+					float accumx = 0.0f;
+					float accumy = 0.0f;
+					accumx += abs(b[x]-b[x+1]);
+					accumy += abs(b[x]-b[x+step]);
+					accumx += abs(g[x]-g[x+1]);
+					accumy += abs(g[x]-g[x+step]);
+					accumx += abs(r[x]-r[x+1]);
+					accumy += abs(r[x]-r[x+step]);
+
+#ifdef USE_FAST_POW
+					*dx = (float)fastPow(a, 1.0f + ratio * accumx); 
+					*dy = (float)fastPow(a, 1.0f + ratio * accumy); 
+#else
+					*dx = (float)cv::pow(a, 1.0f + ratio * accumx); 
+					*dy = (float)cv::pow(a, 1.0f + ratio * accumy); 
+#endif
+					dx++;
+					dy++;
+				}
+				float accumy = 0.0f;
+				accumy += abs(b[width-1]-b[width-1+width]);
+				accumy += abs(g[width-1]-g[width-1+width]);
+				accumy += abs(r[width-1]-r[width-1+width]);
+#ifdef USE_FAST_POW
+				*dy = (float)fastPow(a, 1.0f + ratio * accumy); 
+#else
+				*dy = (float)cv::pow(a, 1.0f + ratio * accumy); 
+#endif
+#endif
+			}
+		}
+	}
+};
 void domainTransformFilter_RF_(cv::Mat& src, cv::Mat& dst, double sigma_space, double sigma_range, int maxiter)
 {
 	double sigma_r = max(sigma_range,0.0001);
@@ -985,11 +1279,27 @@ void domainTransformFilter_RF_(cv::Mat& src, cv::Mat& dst, double sigma_space, d
 	float ratio = (float)(sigma_s / sigma_r);
 	float a = (float)exp(-sqrt(2.0) / sigma_s);
 
-	DomainTransformRFInit_32F_Invoker body(img, dctx, dcty, a, ratio, dim);
+	/*DomainTransformRFInit_32F_Invoker body(img, dctx, dcty, a, ratio, dim);
 	parallel_for_(Range(0, height-1), body);
 
 	for(int i=0;i<maxiter;i++)
 	{
+		DomainTransformRFHorizontal_32F_Invoker H(img, dctx, dim);
+		parallel_for_(Range(0, height), H);
+
+		DomainTransformRFVertical_32F_Invoker V(img, dcty, dim);
+		parallel_for_(Range(0, width/4), V);			
+	}*/
+
+	
+
+	for(int i=0;i<maxiter;i++)
+	{
+		float sigma_h = (float) (sigma_s * sqrt(3.0) * pow(2.0,(maxiter - (i+1))) / sqrt(pow(4.0,maxiter) -1));
+		float a = (float)exp(-sqrt(2.0) / sigma_h);
+		DomainTransformRFInit_32F_Invoker body(img, dctx, dcty, a, ratio, dim);
+	parallel_for_(Range(0, height-1), body);
+
 		DomainTransformRFHorizontal_32F_Invoker H(img, dctx, dim);
 		parallel_for_(Range(0, height), H);
 
@@ -1030,7 +1340,7 @@ void domainTransformFilter_RF_(cv::Mat& src, cv::Mat& dst, double sigma_space, d
 
 void domainTransformFilter(cv::Mat& src, cv::Mat& dst, double sigma_s, double sigma_r, int maxiter, int method)
 {   
-	setNumThreads(4);
+	//setNumThreads(4);
 
 	if(method==DTF_RF)
 	{
@@ -1042,10 +1352,8 @@ void domainTransformFilter(cv::Mat& src, cv::Mat& dst, double sigma_s, double si
 	}
 }
 
-
-
 /////////////////////////////////////////////////////////////////////////////////////////
-//for base implimentation
+//for base implimentation of recursive implimentation
 
 
 // Recursive filter for vertical direction

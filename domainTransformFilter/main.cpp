@@ -1,7 +1,7 @@
 #include "domainTransformFilter.h"
 
 #pragma comment(lib, "opencv_highgui"CV_VERSION_NUMBER".lib")
-
+using namespace std;
 
 #ifndef VK_ESCAPE
 #define VK_ESCAPE 0x1B
@@ -14,13 +14,15 @@
 
 	int sc = 50;
 	int ss = 100;
-	int iteration = 2;
+	int iteration = 3;
 	createTrackbar("sigma_color",wname,&sc,255);
 	createTrackbar("sigma_space",wname,&ss,255);
 	createTrackbar("iteration",wname,&iteration,255);
 	int key = 0;
 
 	Mat show;
+	Mat show1,show2;
+	Domain_Filter dt;
 	while(key!='q' && key!=VK_ESCAPE)
 	{
 		int64 startTime = getTickCount();
@@ -31,6 +33,24 @@
 
 		imshow(wname,show);
 		key = waitKey(1);
+
+		{
+		int64 startTime = getTickCount();
+		dt.filter(src,show1,ss,sc,1,iteration);
+		double time = (getTickCount()-startTime)/(getTickFrequency());
+		printf("domain transform filter: %f ms\n",time*1000.0);
+		}
+		imshow("1",show);
+		{
+			int64 startTime = getTickCount();
+		dt.filter(src,show2,ss,sc,2,iteration);
+		double time = (getTickCount()-startTime)/(getTickFrequency());
+		printf("domain transform filter: %f ms\n",time*1000.0);
+		}
+		imshow("2",show);
+		cout<<PSNR(show,show1)<<endl;
+		cout<<PSNR(show,show2)<<endl;
+		cout<<PSNR(show1,show2)<<endl;
 	}
 
 	destroyWindow(wname);
@@ -75,6 +95,7 @@ void detailEnhancement(Mat& src)
 
 	destroyWindow(wname);
 }
+
 int main(int argc, char** argv)
 {
 	Mat img = imread("statue.png");
