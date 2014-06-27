@@ -1,6 +1,6 @@
 domainTransformFilter
 =====================
-The newest implimentation of the domainTransformFilter is moved to OpenCP (https://github.com/norishigefukushima/OpenCP)
+The newest implimentation of the domainTransformFilter is moved to OpenCP. (https://github.com/norishigefukushima/OpenCP)
 -------------------------------------------------------------------------------------------
 
 Introduction
