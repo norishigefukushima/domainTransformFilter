@@ -22,21 +22,39 @@ http://inf.ufrgs.br/~eslgastal/DomainTransform/
 
 Usage
 -----
-
-void domainTransformFilter(cv::Mat& img, cv::Mat& out, double sigma_s, double sigma_r, int maxiter, int method=DTF_RF)
- img: src image  
- out: dest image  
- sigma_s: sigma of space  
- sigma_r: sigma of range[0:255]  
- maxiter: number of maximam iteration -1  
- method: filtering method for transformed domain. Only Recursive Filtering is implimented, now.  
-
-typedef enum  
-{  
-	DTF_RF=0,//Recursive Filtering  
-	DTF_NC=1,//Normalized Convolution  
-	DTF_IC=1,//Interpolated Convolution  
-}DTF_METHOD;  
+	void domainTransformFilter(InputArray srcImage, OutputArray destImage, float sigma_r, float sigma_s, int maxiter, int norm, int convolutionType, int implementation);
+	srcImage: src image
+	destImage: dest image
+	sigma_s: sigma of space  
+	sigma_r: sigma of range[0:255]  
+	maxiter: number of maximam iteration  
+	norm: cost norm: L1 is default, and it is the same as original paper.
+	convolution type: switching Recursive Filtering, Normalized Convolution and Interpolated Convolution.
+	inplimentation: switching parallel implimentation (Recursive Filtering is carefully optimized).
+	
+	//Joint filtering version. The 2nd argment of guideImage is added.
+	void domainTransformFilter(InputArray srcImage, InputArray guideImage, OutputArray destImage, float sigma_r, float sigma_s, int maxiter, int norm, int convolutionType, int implementation);
+	
+	typedef enum
+	{
+		DTF_L1=1,
+		DTF_L2=2
+	}DTF_NORM;
+	
+	typedef enum
+	{
+		DTF_RF=0,//Recursive Filtering
+		DTF_NC=1,//Normalized Convolution
+		DTF_IC=2,//Interpolated Convolution
+	
+	}DTF_METHOD;
+	
+	typedef enum
+	{
+		DTF_BGRA_SSE=0,
+		DTF_BGRA_SSE_PARALLEL,
+		DTF_SLOWEST
+	}DTF_IMPLEMENTATION;
 
 
 Results
