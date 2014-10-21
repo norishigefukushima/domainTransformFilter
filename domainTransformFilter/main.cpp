@@ -35,15 +35,15 @@ using namespace std;
 		//domainTransformFilterRF(src, show,ss,sc,iteration);
 		if(sw==0)
 		{
-			domainTransformFilterRF(src, show,ss,sc,iteration,norm+1,implimentation);
+			domainTransformFilter(src, show,ss,sc,iteration,norm+1,DTF_RF,implimentation);
 		}
 		else if(sw == 1)
 		{
-			domainTransformFilterNC(src, show,ss,sc,iteration,norm+1,implimentation);
+			domainTransformFilter(src, show,ss,sc,iteration,norm+1,DTF_NC,implimentation);
 		}
 		else
 		{
-			domainTransformFilterIC(src, show,ss,sc,iteration,norm+1,implimentation);
+			domainTransformFilter(src, show,ss,sc,iteration,norm+1,DTF_IC,implimentation);
 		}
 		
 		double time = (getTickCount()-startTime)/(getTickFrequency());
@@ -79,8 +79,8 @@ void detailEnhancement(Mat& src)
 	{
 		int64 startTime = getTickCount();
 
-		//domainTransformFilterRF(src, smooth,ss,sc,iteration,DTF_L1,DTF_BGRA_SSE_PARALLEL);
-		domainTransformFilterNC(src, smooth,ss,sc,iteration,DTF_L1,DTF_SLOWEST);
+		domainTransformFilter(src, smooth,ss,sc,iteration,DTF_L1,DTF_RF,DTF_BGRA_SSE_PARALLEL);
+		
 
 		subtract(src,smooth,sub,noArray(),CV_32F);
 		sub*=(boost*0.1);

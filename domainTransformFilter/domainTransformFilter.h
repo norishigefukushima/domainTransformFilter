@@ -29,12 +29,9 @@ typedef enum
 	DTF_SLOWEST
 }DTF_IMPLEMENTATION;
 
-void domainTransformFilterRF(const Mat& img, Mat& out, float sigma_r, float sigma_s, int maxiter, int norm=DTF_L1, int implementation=DTF_BGRA_SSE_PARALLEL);
-void domainTransformFilterRF(const Mat& img, const Mat& guide, Mat& out, float sigma_r, float sigma_s,int maxiter, int norm=DTF_L1, int implementation=DTF_BGRA_SSE_PARALLEL);
-void domainTransformFilterNC(const Mat& src, Mat& dest, float sigma_r, float sigma_s, int maxiter, int norm, int implementation=DTF_BGRA_SSE_PARALLEL);
-void domainTransformFilterNC(const Mat& src, const Mat& guide, Mat& dest, float sigma_r, float sigma_s, int maxiter, int norm, int implementation=DTF_BGRA_SSE_PARALLEL);
-void domainTransformFilterIC(const Mat& src, Mat& dest, float sigma_r, float sigma_s, int maxiter, int norm, int implementation=DTF_BGRA_SSE_PARALLEL);
-void domainTransformFilterIC(const Mat& src, const Mat& guide, Mat& dest, float sigma_r, float sigma_s, int maxiter, int norm, int implementation=DTF_BGRA_SSE_PARALLEL);
+
+void domainTransformFilter(InputArray srcImage, OutputArray destImage, float sigma_r, float sigma_s, int maxiter, int norm=DTF_L1, int convolutionType=DTF_RF, int implementation=DTF_SLOWEST);
+void domainTransformFilter(InputArray srcImage, InputArray guideImage, OutputArray destImage, float sigma_r, float sigma_s, int maxiter, int norm=DTF_L1, int convolutionType=DTF_RF, int implementation=DTF_SLOWEST);
 
 
 void cvtColorBGR2PLANE(const Mat& src, Mat& dest);

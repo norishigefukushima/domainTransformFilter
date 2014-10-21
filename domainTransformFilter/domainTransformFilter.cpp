@@ -3560,3 +3560,27 @@ void domainTransformFilterIC(const Mat& src, Mat& dst, float sigma_r, float sigm
 {
 	domainTransformFilterIC(src,src,dst,sigma_r,sigma_s,maxiter,norm,implementation);
 }
+
+
+
+void domainTransformFilter(InputArray srcImage, InputArray guideImage, OutputArray destImage, float sigma_r, float sigma_s, int maxiter, int norm, int convolutionType, int implementation)
+{
+	Mat src = srcImage.getMat();
+	if(destImage.empty())destImage.create(src.size(),src.type());
+	Mat guide = guideImage.getMat();
+	Mat dst = destImage.getMat();
+
+	if(convolutionType==DTF_RF)
+		domainTransformFilterRF(src,guide, dst,sigma_r,sigma_s,maxiter,norm,implementation);
+	if(convolutionType==DTF_NC)
+		domainTransformFilterNC(src,guide, dst,sigma_r,sigma_s,maxiter,norm,implementation);
+	if(convolutionType==DTF_IC)
+		domainTransformFilterIC(src,guide, dst,sigma_r,sigma_s,maxiter,norm,implementation);
+
+	
+}
+
+void domainTransformFilter(InputArray srcImage, OutputArray destImage, float sigma_r, float sigma_s, int maxiter, int norm, int convolutionType, int implementation)
+{
+	domainTransformFilter(srcImage,srcImage,destImage,sigma_r,sigma_s,maxiter,norm, convolutionType, implementation);
+}
