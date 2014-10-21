@@ -17,40 +17,40 @@ using namespace std;
 	int iteration = 3;
 	createTrackbar("sigma_color",wname,&sc,255);
 	createTrackbar("sigma_space",wname,&ss,255);
-	createTrackbar("iteration",wname,&iteration,255);
+	createTrackbar("iteration",wname,&iteration,10);
+
+	int norm = 0;
+	createTrackbar("normL1/L2",wname,&norm,1);
+	int implimentation=2;
+	createTrackbar("impliment",wname,&implimentation,2);
+
+	int sw=2;
+	createTrackbar("RF/NC/IC",wname,&sw,2);
 	int key = 0;
 
 	Mat show;
-	Mat show1,show2;
-	Domain_Filter dt;
 	while(key!='q' && key!=VK_ESCAPE)
 	{
 		int64 startTime = getTickCount();
-		domainTransformFilter(src, show,ss,sc,iteration);
-
+		//domainTransformFilterRF(src, show,ss,sc,iteration);
+		if(sw==0)
+		{
+			domainTransformFilterRF(src, show,ss,sc,iteration,norm+1,implimentation);
+		}
+		else if(sw == 1)
+		{
+			domainTransformFilterNC(src, show,ss,sc,iteration,norm+1,implimentation);
+		}
+		else
+		{
+			domainTransformFilterIC(src, show,ss,sc,iteration,norm+1,implimentation);
+		}
+		
 		double time = (getTickCount()-startTime)/(getTickFrequency());
 		printf("domain transform filter: %f ms\n",time*1000.0);
 
 		imshow(wname,show);
 		key = waitKey(1);
-
-		{
-		int64 startTime = getTickCount();
-		dt.filter(src,show1,ss,sc,1,iteration);
-		double time = (getTickCount()-startTime)/(getTickFrequency());
-		printf("domain transform filter: %f ms\n",time*1000.0);
-		}
-		imshow("1",show);
-		{
-			int64 startTime = getTickCount();
-		dt.filter(src,show2,ss,sc,2,iteration);
-		double time = (getTickCount()-startTime)/(getTickFrequency());
-		printf("domain transform filter: %f ms\n",time*1000.0);
-		}
-		imshow("2",show);
-		cout<<PSNR(show,show1)<<endl;
-		cout<<PSNR(show,show2)<<endl;
-		cout<<PSNR(show1,show2)<<endl;
 	}
 
 	destroyWindow(wname);
@@ -79,7 +79,8 @@ void detailEnhancement(Mat& src)
 	{
 		int64 startTime = getTickCount();
 
-		domainTransformFilter(src, smooth,ss,sc,iteration);
+		//domainTransformFilterRF(src, smooth,ss,sc,iteration,DTF_L1,DTF_BGRA_SSE_PARALLEL);
+		domainTransformFilterNC(src, smooth,ss,sc,iteration,DTF_L1,DTF_SLOWEST);
 
 		subtract(src,smooth,sub,noArray(),CV_32F);
 		sub*=(boost*0.1);

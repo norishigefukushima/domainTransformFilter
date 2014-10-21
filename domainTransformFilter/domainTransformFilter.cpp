@@ -1,410 +1,19 @@
 #include "domainTransformFilter.h"
-
 #include <opencv2/core/internal.hpp>
-#include <iostream>
-#include <omp.h>
-using namespace std;
+//
+
+	//
 
 
-#include "fmath.hpp"
-using namespace fmath;
-
-#define SSE_FUNC
-
-//color transform functions
-//future: place 2 bgr SSE fucntion
-
-void cvtColorBGR2PLANE_8u( const Mat& src, Mat& dest)
+inline int pow2(int x)
 {
-	dest.create(Size(src.cols,src.rows*3),CV_8U);
-
-	const int size = src.size().area();
-	const int ssecount = (3*size)/48;
-	const int ssesize = ssecount*48;
-
-	const uchar* s = src.ptr<uchar>(0);
-	uchar* B = dest.ptr<uchar>(0);//line by line interleave
-	uchar* G = dest.ptr<uchar>(src.rows);
-	uchar* R = dest.ptr<uchar>(2*src.rows);
-
-	//BGR BGR BGR BGR BGR B	
-	//GR BGR BGR BGR BGR BG
-	//R BGR BGR BGR BGR BGR
-	//BBBBBBGGGGGRRRRR shuffle
-	const __m128i mask1 = _mm_setr_epi8(0,3,6,9,12,15,1,4,7,10,13,2,5,8,11,14);
-	//GGGGGBBBBBBRRRRR shuffle
-	const __m128i smask1 = _mm_setr_epi8(6,7,8,9,10,0,1,2,3,4,5,11,12,13,14,15);
-	const __m128i ssmask1 = _mm_setr_epi8(11,12,13,14,15,0,1,2,3,4,5,6,7,8,9,10);
-
-	//GGGGGGBBBBBRRRRR shuffle
-	const __m128i mask2 = _mm_setr_epi8(0,3,6,9,12,15, 2,5,8,11,14,1,4,7,10,13);
-	//const __m128i smask2 = _mm_setr_epi8(6,7,8,9,10,0,1,2,3,4,5,11,12,13,14,15);
-	const __m128i ssmask2 = _mm_setr_epi8(0,1,2,3,4,11,12,13,14,15,5,6,7,8,9,10);
-
-	//RRRRRRGGGGGBBBBB shuffle -> same mask2
-	//__m128i mask3 = _mm_setr_epi8(0,3,6,9,12,15, 2,5,8,11,14,1,4,7,10,13);
-
-	//const __m128i smask3 = _mm_setr_epi8(6,7,8,9,10,0,1,2,3,4,5,6,7,8,9,10);
-	//const __m128i ssmask3 = _mm_setr_epi8(11,12,13,14,15,0,1,2,3,4,5,6,7,8,9,10);
-
-	const __m128i bmask1 = _mm_setr_epi8
-		(255,255,255,255,255,255,0,0,0,0,0,0,0,0,0,0);
-
-	const __m128i bmask2 = _mm_setr_epi8
-		(255,255,255,255,255,255,255,255,255,255,255,0,0,0,0,0);
-
-	const __m128i bmask3 = _mm_setr_epi8
-		(255,255,255,255,255,0,0,0,0,0,0,0,0,0,0,0);
-
-	const __m128i bmask4 = _mm_setr_epi8
-		(255,255,255,255,255,255,255,255,255,255,0,0,0,0,0,0);	
-
-	__m128i a,b,c;
-
-	for(int i=0;i<ssecount;i++)
-	{
-		a = _mm_shuffle_epi8(_mm_load_si128((__m128i*)(s)),mask1);
-		b = _mm_shuffle_epi8(_mm_load_si128((__m128i*)(s+16)),mask2);
-		c = _mm_shuffle_epi8(_mm_load_si128((__m128i*)(s+32)),mask2);
-		_mm_storeu_si128((__m128i*)(B),_mm_blendv_epi8(c,_mm_blendv_epi8(b,a,bmask1),bmask2));
-		a = _mm_shuffle_epi8(a,smask1);
-		b = _mm_shuffle_epi8(b,smask1);
-		c = _mm_shuffle_epi8(c,ssmask1);
-		_mm_storeu_si128((__m128i*)(G),_mm_blendv_epi8(c,_mm_blendv_epi8(b,a,bmask3),bmask2));
-
-		a = _mm_shuffle_epi8(a,ssmask1);
-		c = _mm_shuffle_epi8(c,ssmask1);
-		b = _mm_shuffle_epi8(b,ssmask2);
-
-		_mm_storeu_si128((__m128i*)(R),_mm_blendv_epi8(c,_mm_blendv_epi8(b,a,bmask3),bmask4));
-
-		s+=48;
-		R+=16;
-		G+=16;
-		B+=16;
-	}
-
-	for(int i=ssesize;i<3*size;i+=3)
-	{
-		B[0]=s[0];
-		G[0]=s[1];
-		R[0]=s[2];
-		s+=3,R++,G++,B++;
-	}
+	return x*x;
 }
 
-void cvtColorBGR2PLANE_32f( const Mat& src, Mat& dest)
+inline float pow2(float x)
 {
-	dest.create(Size(src.cols,src.rows*3),CV_32F);
-
-	const int size = src.size().area();
-	const int ssecount = size/4;
-	const int ssesize = ssecount*12;
-
-	const float* s = src.ptr<float>(0);
-	float* B = dest.ptr<float>(0);//line by line interleave
-	float* G = dest.ptr<float>(src.rows);
-	float* R = dest.ptr<float>(2*src.rows);
-
-	for(int i=0;i<ssecount;i++)
-	{
-		__m128 a = _mm_load_ps(s);
-		__m128 b = _mm_load_ps(s+4);
-		__m128 c = _mm_load_ps(s+8);
-
-		__m128 aa = _mm_shuffle_ps(a,a,_MM_SHUFFLE(1,2,3,0));
-		aa=_mm_blend_ps(aa,b,4);
-		__m128 cc= _mm_shuffle_ps(c,c,_MM_SHUFFLE(1,3,2,0));
-		aa=_mm_blend_ps(aa,cc,8);
-		_mm_storeu_ps((B),aa);
-
-		aa = _mm_shuffle_ps(a,a,_MM_SHUFFLE(3,2,0,1));
-		__m128 bb = _mm_shuffle_ps(b,b,_MM_SHUFFLE(2,3,0,1));
-		bb=_mm_blend_ps(bb,aa,1);
-		cc= _mm_shuffle_ps(c,c,_MM_SHUFFLE(2,3,1,0));
-		bb=_mm_blend_ps(bb,cc,8);
-		_mm_storeu_ps((G),bb);
-
-		aa = _mm_shuffle_ps(a,a,_MM_SHUFFLE(3,1,0,2));
-		bb=_mm_blend_ps(aa,b,2);
-		cc= _mm_shuffle_ps(c,c,_MM_SHUFFLE(3,0,1,2));
-		cc=_mm_blend_ps(bb,cc,12);
-		_mm_storeu_ps((R),cc);
-
-		s+=12;
-		R+=4;
-		G+=4;
-		B+=4;
-	}
-	for(int i=ssesize;i<3*size;i+=3)
-	{
-		B[0]=s[0];
-		G[0]=s[1];
-		R[0]=s[2];
-		s+=3,R++,G++,B++;
-	}
+	return x*x;
 }
-
-template <class T>
-void cvtColorBGR2PLANE_(const Mat& src, Mat& dest, int depth)
-{
-	vector<Mat> v(3);
-	split(src,v);
-	dest.create(Size(src.cols, src.rows*3),depth);
-
-	memcpy(dest.data,                    v[0].data,src.size().area()*sizeof(T));
-	memcpy(dest.data+src.size().area()*sizeof(T),  v[1].data,src.size().area()*sizeof(T));
-	memcpy(dest.data+2*src.size().area()*sizeof(T),v[2].data,src.size().area()*sizeof(T));
-}
-
-void cvtColorBGR2PLANE(const Mat& src, Mat& dest)
-{
-	if(src.channels()!=3)printf("input image must have 3 channels\n");
-
-	if(src.depth()==CV_8U)
-	{
-		cvtColorBGR2PLANE_8u(src, dest);
-		//cvtColorBGR2PLANE_<uchar>(src, dest, CV_8U);
-	}
-	else if(src.depth()==CV_16U)
-	{
-		cvtColorBGR2PLANE_<ushort>(src, dest, CV_16U);
-	}
-	if(src.depth()==CV_16S)
-	{
-		cvtColorBGR2PLANE_<short>(src, dest, CV_16S);
-	}
-	if(src.depth()==CV_32S)
-	{
-		cvtColorBGR2PLANE_<int>(src, dest, CV_32S);
-	}
-	if(src.depth()==CV_32F)
-	{
-		cvtColorBGR2PLANE_32f(src, dest);
-		//cvtColorBGR2PLANE_<float>(src, dest, CV_32F);
-	}
-	if(src.depth()==CV_64F)
-	{
-		cvtColorBGR2PLANE_<double>(src, dest, CV_64F);
-	}
-}
-
-
-template <class T>
-void cvtColorPLANE2BGR_(const Mat& src, Mat& dest, int depth)
-{
-	int width = src.cols;
-	int height = src.rows/3;
-	T* b = (T*)src.ptr<T>(0);
-	T* g = (T*)src.ptr<T>(height);
-	T* r = (T*)src.ptr<T>(2*height);
-
-	Mat B(height, width, src.type(),b);
-	Mat G(height, width, src.type(),g);
-	Mat R(height, width, src.type(),r);
-	vector<Mat> v(3);
-	v[0]=B;
-	v[1]=G;
-	v[2]=R;
-	merge(v,dest);
-}
-
-void cvtColorPLANE2BGR_8u_align(const Mat& src, Mat& dest)
-{
-	int width = src.cols;
-	int height = src.rows/3;
-
-	if(dest.empty()) dest.create(Size(width,height),CV_8UC3);
-	else if(width!=dest.cols || height!=dest.rows) dest.create(Size(width,height),CV_8UC3);
-	else if(dest.type()!=CV_8UC3) dest.create(Size(width,height),CV_8UC3);
-
-	uchar* B = (uchar*)src.ptr<uchar>(0);
-	uchar* G = (uchar*)src.ptr<uchar>(height);
-	uchar* R = (uchar*)src.ptr<uchar>(2*height);
-
-	uchar* D = (uchar*)dest.ptr<uchar>(0);
-
-	int ssecount = width*height*3/48;
-
-	const __m128i mask1 = _mm_setr_epi8(0, 11, 6, 1, 12, 7, 2, 13, 8, 3, 14, 9, 4, 15, 10, 5);
-	const __m128i mask2 = _mm_setr_epi8(5, 0, 11, 6, 1, 12, 7, 2, 13, 8, 3, 14, 9, 4, 15, 10);
-	const __m128i mask3 = _mm_setr_epi8(10, 5, 0, 11, 6, 1, 12, 7, 2, 13, 8, 3, 14, 9, 4, 15);
-	const __m128i bmask1 = _mm_setr_epi8(0,255,255,0,255,255,0,255,255,0,255,255,0,255,255,0);
-	const __m128i bmask2 = _mm_setr_epi8(255,255,0,255,255,0,255,255,0,255,255,0,255,255,0,255);
-
-	for(int i=ssecount;i--;)
-	{
-		__m128i a = _mm_load_si128((const __m128i*)B);
-		__m128i b = _mm_load_si128((const __m128i*)G);
-		__m128i c = _mm_load_si128((const __m128i*)R);
-
-		a = _mm_shuffle_epi8(a,mask1);
-		b = _mm_shuffle_epi8(b,mask2);
-		c = _mm_shuffle_epi8(c,mask3);
-		_mm_stream_si128((__m128i*)(D),_mm_blendv_epi8(c,_mm_blendv_epi8(a,b,bmask1),bmask2));
-		_mm_stream_si128((__m128i*)(D+16),_mm_blendv_epi8(b,_mm_blendv_epi8(a,c,bmask2),bmask1));		
-		_mm_stream_si128((__m128i*)(D+32),_mm_blendv_epi8(c,_mm_blendv_epi8(b,a,bmask2),bmask1));
-
-		D+=48;
-		B+=16;
-		G+=16;
-		R+=16;
-	}
-}
-
-void cvtColorPLANE2BGR_8u(const Mat& src, Mat& dest)
-{
-	int width = src.cols;
-	int height = src.rows/3;
-
-	if(dest.empty()) dest.create(Size(width,height),CV_8UC3);
-	else if(width!=dest.cols || height!=dest.rows) dest.create(Size(width,height),CV_8UC3);
-	else if(dest.type()!=CV_8UC3) dest.create(Size(width,height),CV_8UC3);
-
-	uchar* B = (uchar*)src.ptr<uchar>(0);
-	uchar* G = (uchar*)src.ptr<uchar>(height);
-	uchar* R = (uchar*)src.ptr<uchar>(2*height);
-
-	uchar* D = (uchar*)dest.ptr<uchar>(0);
-
-	int ssecount = width*height*3/48;
-	int rem = width*height*3-ssecount*48;
-
-	const __m128i mask1 = _mm_setr_epi8(0, 11, 6, 1, 12, 7, 2, 13, 8, 3, 14, 9, 4, 15, 10, 5);
-	const __m128i mask2 = _mm_setr_epi8(5, 0, 11, 6, 1, 12, 7, 2, 13, 8, 3, 14, 9, 4, 15, 10);
-	const __m128i mask3 = _mm_setr_epi8(10, 5, 0, 11, 6, 1, 12, 7, 2, 13, 8, 3, 14, 9, 4, 15);
-	const __m128i bmask1 = _mm_setr_epi8(0,255,255,0,255,255,0,255,255,0,255,255,0,255,255,0);
-	const __m128i bmask2 = _mm_setr_epi8(255,255,0,255,255,0,255,255,0,255,255,0,255,255,0,255);
-
-	for(int i=ssecount;i--;)
-	{
-		__m128i a = _mm_loadu_si128((const __m128i*)B);
-		__m128i b = _mm_loadu_si128((const __m128i*)G);
-		__m128i c = _mm_loadu_si128((const __m128i*)R);
-
-		a = _mm_shuffle_epi8(a,mask1);
-		b = _mm_shuffle_epi8(b,mask2);
-		c = _mm_shuffle_epi8(c,mask3);
-		
-		_mm_storeu_si128((__m128i*)(D),_mm_blendv_epi8(c,_mm_blendv_epi8(a,b,bmask1),bmask2));
-		_mm_storeu_si128((__m128i*)(D+16),_mm_blendv_epi8(b,_mm_blendv_epi8(a,c,bmask2),bmask1));		
-		_mm_storeu_si128((__m128i*)(D+32),_mm_blendv_epi8(c,_mm_blendv_epi8(b,a,bmask2),bmask1));
-
-		D+=48;
-		B+=16;
-		G+=16;
-		R+=16;
-	}
-	for(int i=rem;i--;)
-	{
-		D[0]=*B;
-		D[1]=*G;
-		D[2]=*R;
-		D+=3;
-		B++,G++,R++;
-	}
-}
-
-void cvtColorPLANE2BGR(const Mat& src, Mat& dest)
-{
-	if(src.depth()==CV_8U)
-	{
-		//cvtColorPLANE2BGR_<uchar>(src, dest, CV_8U);	
-		if(src.cols%16==0)
-			cvtColorPLANE2BGR_8u_align(src, dest);	
-		else
-			cvtColorPLANE2BGR_8u(src, dest);	
-	}
-	else if(src.depth()==CV_16U)
-	{
-		cvtColorPLANE2BGR_<ushort>(src, dest, CV_16U);
-	}
-	if(src.depth()==CV_16S)
-	{
-		cvtColorPLANE2BGR_<short>(src, dest, CV_16S);
-	}
-	if(src.depth()==CV_32S)
-	{
-		cvtColorPLANE2BGR_<int>(src, dest, CV_32S);
-	}
-	if(src.depth()==CV_32F)
-	{
-		cvtColorPLANE2BGR_<float>(src, dest, CV_32F);
-	}
-	if(src.depth()==CV_64F)
-	{
-		cvtColorPLANE2BGR_<double>(src, dest, CV_64F);
-	}
-}
-
-//pow function
-
-//#define USE_FAST_POW
-// Fast pow function, referred from
-// http://martin.ankerl.com/2012/01/25/optimized-approximative-pow-in-c-and-cpp/
-double fastPow(double a, double b)
-{
-	union {
-		double d;
-		int x[2];
-	} u = { a };
-	u.x[1] = (int)(b * (u.x[1] - 1072632447) + 1072632447);
-	u.x[0] = 0;
-	return u.d;
-}
-
-#ifdef SSE_FUNC
-
-#define _mm_pow_ps _mm_powel_ps //accurate pow
-//#define _mm_pow_ps _mm_pow01_ps //fast pow
-
-inline __m128 _mm_powel_ps(__m128 a, __m128 b)
-{
-	return exp_ps(_mm_mul_ps(b,log_ps(a)));
-}
-
-//refine rcp
-inline __m128 _mm_rcp_22bit_ps(__m128 a )
-{
-	__m128 xm0 = a;
-	__m128 xm1 = _mm_rcp_ps(xm0);
-	xm0 = _mm_mul_ps( _mm_mul_ps( xm0, xm1 ), xm1 );
-	xm1 = _mm_add_ps( xm1, xm1 );
-	return _mm_sub_ps( xm1, xm0 );
-}
-
-// Fast SSE pow for range [0, 1]
-// Adapted from C. Schlick with one more iteration each for exp(x) and ln(x)
-// 8 muls, 5 adds, 1 rcp
-inline __m128 _mm_pow01_ps(__m128 x, __m128 y)
-{
-	static const __m128 fourOne = _mm_set1_ps(1.0f);
-	static const __m128 fourHalf = _mm_set1_ps(0.5f);
-
-	__m128 a = _mm_sub_ps(fourOne, y);
-	__m128 b = _mm_sub_ps(x, fourOne);
-	__m128 aSq = _mm_mul_ps(a, a);
-	__m128 bSq = _mm_mul_ps(b, b);
-	__m128 c = _mm_mul_ps(fourHalf, bSq);
-	__m128 d = _mm_sub_ps(b, c);
-	__m128 dSq = _mm_mul_ps(d, d);
-	__m128 e = _mm_mul_ps(aSq, dSq);
-	__m128 f = _mm_mul_ps(a, d);
-	__m128 g = _mm_mul_ps(fourHalf, e);
-	__m128 h = _mm_add_ps(fourOne, f);
-	__m128 i = _mm_add_ps(h, g);	
-	__m128 iRcp = _mm_rcp_ps(i);
-	//__m128 iRcp = _mm_rcp_22bit_ps(i);
-	__m128 result = _mm_mul_ps(x, iRcp);
-
-	return result;
-}
-#endif
-
-
-// domain transform filter
-
-//RF implimentations
 
 class DomainTransformRFVertical_32F_Invoker : public cv::ParallelLoopBody
 {
@@ -971,97 +580,97 @@ public:
 		int height = img->rows/dim;
 		int ssewidth = ((width)/4);
 
-#ifdef SSE_FUNC
+		#ifdef SSE_FUNC
 		const int CV_DECL_ALIGNED(16) v32f_absmask[] = { 0x7fffffff, 0x7fffffff, 0x7fffffff, 0x7fffffff };
 		const __m128 mratio = _mm_set1_ps(ratio);
 		const __m128 ones = _mm_set1_ps(1.f);
 		const __m128 ma = _mm_set1_ps(a);
-#endif
+		#endif
 
 		// for last line
 		if(dim==1)
 		{
 
-#ifdef SSE_FUNC
-			float* s = img->ptr<float>(height-1);
-			float* dx = dctx->ptr<float>(height-1);
-			for(int x=ssewidth; x--;)
-			{
-				__m128 ms = _mm_load_ps(s);
-				__m128 msp = _mm_loadu_ps(s+1);
+		#ifdef SSE_FUNC
+		float* s = img->ptr<float>(height-1);
+		float* dx = dctx->ptr<float>(height-1);
+		for(int x=ssewidth; x--;)
+		{
+		__m128 ms = _mm_load_ps(s);
+		__m128 msp = _mm_loadu_ps(s+1);
 
-				__m128 w =  _mm_and_ps(_mm_sub_ps(ms,msp), *(const __m128*)v32f_absmask);
-				__m128 d = _mm_pow_ps(ma,_mm_add_ps(ones, _mm_mul_ps(mratio,w)));
-				_mm_stream_ps(dx,d);
+		__m128 w =  _mm_and_ps(_mm_sub_ps(ms,msp), *(const __m128*)v32f_absmask);
+		__m128 d = _mm_pow_ps(ma,_mm_add_ps(ones, _mm_mul_ps(mratio,w)));
+		_mm_stream_ps(dx,d);
 
-				s+=4;
-				dx+=4;
-			}
-#else
-			float* v = img->ptr<float>(height-1);
+		s+=4;
+		dx+=4;
+		}
+		#else
+		float* v = img->ptr<float>(height-1);
 
-			float* dx = dctx->ptr<float>(height-1);
-			for(int x=0; x<width-1; x++)
-			{
-				float accumx = 0.0f;
-				accumx += abs(v[x]-v[x+1]);
+		float* dx = dctx->ptr<float>(height-1);
+		for(int x=0; x<width-1; x++)
+		{
+		float accumx = 0.0f;
+		accumx += abs(v[x]-v[x+1]);
 
-#ifdef USE_FAST_POW
-				*dx = (float)fastPow(a, 1.0f + ratio * accumx); 
-#else
-				*dx = (float)cv::pow(a, 1.0f + ratio * accumx); 
-#endif
-				dx++;
-			}
-#endif
+		#ifdef USE_FAST_POW
+		*dx = (float)fastPow(a, 1.0f + ratio * accumx); 
+		#else
+		*dx = (float)cv::pow(a, 1.0f + ratio * accumx); 
+		#endif
+		dx++;
+		}
+		#endif
 		}
 		else if(dim==3)
 		{
-			const int istep = height*width;
-			float* b = img->ptr<float>(height-1);
-			float* g = b+istep;
-			float* r = g+istep;
+		const int istep = height*width;
+		float* b = img->ptr<float>(height-1);
+		float* g = b+istep;
+		float* r = g+istep;
 
-			float* dx = dctx->ptr<float>(height-1);
+		float* dx = dctx->ptr<float>(height-1);
 
-#ifdef SSE_FUNC
-			for(int x=ssewidth; x--;)
-			{
-				__m128 ms = _mm_load_ps(b);
-				__m128 msp = _mm_loadu_ps(b+1);//h diff
-				__m128 w =  _mm_and_ps(_mm_sub_ps(ms,msp), *(const __m128*)v32f_absmask);
+		#ifdef SSE_FUNC
+		for(int x=ssewidth; x--;)
+		{
+		__m128 ms = _mm_load_ps(b);
+		__m128 msp = _mm_loadu_ps(b+1);//h diff
+		__m128 w =  _mm_and_ps(_mm_sub_ps(ms,msp), *(const __m128*)v32f_absmask);
 
-				ms = _mm_load_ps(g);
-				msp = _mm_loadu_ps(g+1);//h diff
-				w =  _mm_add_ps(w, _mm_and_ps(_mm_sub_ps(ms,msp), *(const __m128*)v32f_absmask));
+		ms = _mm_load_ps(g);
+		msp = _mm_loadu_ps(g+1);//h diff
+		w =  _mm_add_ps(w, _mm_and_ps(_mm_sub_ps(ms,msp), *(const __m128*)v32f_absmask));
 
-				ms = _mm_load_ps(r);
-				msp = _mm_loadu_ps(r+1);//h diff
-				w =  _mm_add_ps(w, _mm_and_ps(_mm_sub_ps(ms,msp), *(const __m128*)v32f_absmask));
+		ms = _mm_load_ps(r);
+		msp = _mm_loadu_ps(r+1);//h diff
+		w =  _mm_add_ps(w, _mm_and_ps(_mm_sub_ps(ms,msp), *(const __m128*)v32f_absmask));
 
-				_mm_stream_ps(dx, _mm_pow_ps(ma,_mm_add_ps(ones, _mm_mul_ps(mratio,w))));
+		_mm_stream_ps(dx, _mm_pow_ps(ma,_mm_add_ps(ones, _mm_mul_ps(mratio,w))));
 
-				b+=4;
-				g+=4;
-				r+=4;
-				dx+=4;
-			}
-#else
-			for(int x=0; x<width-1; x++)
-			{
-				float accumx = 0.0f;
-				accumx += abs(b[x]-b[x+1]);
-				accumx += abs(g[x]-g[x+1]);
-				accumx += abs(r[x]-r[x+1]);
+		b+=4;
+		g+=4;
+		r+=4;
+		dx+=4;
+		}
+		#else
+		for(int x=0; x<width-1; x++)
+		{
+		float accumx = 0.0f;
+		accumx += abs(b[x]-b[x+1]);
+		accumx += abs(g[x]-g[x+1]);
+		accumx += abs(r[x]-r[x+1]);
 
-#ifdef USE_FAST_POW
-				*dx = (float)fastPow(a, 1.0f + ratio * accumx); 
-#else
-				*dx = (float)cv::pow(a, 1.0f + ratio * accumx); 
-#endif
-				dx++;
-			}
-#endif
+		#ifdef USE_FAST_POW
+		*dx = (float)fastPow(a, 1.0f + ratio * accumx); 
+		#else
+		*dx = (float)cv::pow(a, 1.0f + ratio * accumx); 
+		#endif
+		dx++;
+		}
+		#endif
 		}
 		*/
 	}
@@ -1239,7 +848,7 @@ public:
 		}
 	}
 };
-void domainTransformFilter_RF_(cv::Mat& src, cv::Mat& dst, double sigma_space, double sigma_range, int maxiter)
+void domainTransformFilter_RF_(const cv::Mat& src, cv::Mat& dst, double sigma_space, double sigma_range, int maxiter)
 {
 	double sigma_r = max(sigma_range,0.0001);
 	double sigma_s = max(sigma_space,0.0001);
@@ -1279,33 +888,33 @@ void domainTransformFilter_RF_(cv::Mat& src, cv::Mat& dst, double sigma_space, d
 	float ratio = (float)(sigma_s / sigma_r);
 	float a = (float)exp(-sqrt(2.0) / sigma_s);
 
-	/*DomainTransformRFInit_32F_Invoker body(img, dctx, dcty, a, ratio, dim);
+	DomainTransformRFInit_32F_Invoker body(img, dctx, dcty, a, ratio, dim);
 	parallel_for_(Range(0, height-1), body);
 
 	for(int i=0;i<maxiter;i++)
 	{
+	DomainTransformRFHorizontal_32F_Invoker H(img, dctx, dim);
+	parallel_for_(Range(0, height), H);
+
+	DomainTransformRFVertical_32F_Invoker V(img, dcty, dim);
+	parallel_for_(Range(0, width/4), V);			
+	}
+
+
+
+	/*for(int i=0;i<maxiter;i++)
+	{
+		float sigma_h = (float) (sigma_s * sqrt(3.0) * pow(2.0,(maxiter - (i+1))) / sqrt(pow(4.0,maxiter) -1));
+		float a = (float)exp(-sqrt(2.0) / sigma_h);
+		DomainTransformRFInit_32F_Invoker body(img, dctx, dcty, a, ratio, dim);
+		parallel_for_(Range(0, height-1), body);
+
 		DomainTransformRFHorizontal_32F_Invoker H(img, dctx, dim);
 		parallel_for_(Range(0, height), H);
 
 		DomainTransformRFVertical_32F_Invoker V(img, dcty, dim);
 		parallel_for_(Range(0, width/4), V);			
 	}*/
-
-	
-
-	for(int i=0;i<maxiter;i++)
-	{
-		float sigma_h = (float) (sigma_s * sqrt(3.0) * pow(2.0,(maxiter - (i+1))) / sqrt(pow(4.0,maxiter) -1));
-		float a = (float)exp(-sqrt(2.0) / sigma_h);
-		DomainTransformRFInit_32F_Invoker body(img, dctx, dcty, a, ratio, dim);
-	parallel_for_(Range(0, height-1), body);
-
-		DomainTransformRFHorizontal_32F_Invoker H(img, dctx, dim);
-		parallel_for_(Range(0, height), H);
-
-		DomainTransformRFVertical_32F_Invoker V(img, dcty, dim);
-		parallel_for_(Range(0, width/4), V);			
-	}
 	if(dim==1)
 	{
 		if(src.depth()==CV_32F) 
@@ -1337,35 +946,1641 @@ void domainTransformFilter_RF_(cv::Mat& src, cv::Mat& dst, double sigma_space, d
 	}
 }
 
+#include "fmath.hpp"
+using namespace fmath;
+inline __m128 _mm_pow_ps(__m128 a, __m128 b)
+{
+	return exp_ps(_mm_mul_ps(b,log_ps(a)));
+}
 
-void domainTransformFilter(cv::Mat& src, cv::Mat& dst, double sigma_s, double sigma_r, int maxiter, int method)
-{   
-	//setNumThreads(4);
+inline float pow_fmath(float a, float b)
+{
+	return fmath::exp(b*fmath::log(a));
+}
 
-	if(method==DTF_RF)
+void pow_fmath(const float a , const Mat& src, Mat & dest)
+{
+	if(dest.empty())dest.create(src.size(),CV_32F);
+
+	int width = src.cols;
+	int height = src.rows;
+
+	int size  =src.size().area();
+	int i=0;
+
+	const float* s = src.ptr<float>(0);
+	float* d = dest.ptr<float>(0);
+	const __m128 ma = _mm_set1_ps(a);
+	for(i=0;i<=size-4;i+=4)
 	{
-		domainTransformFilter_RF_(src, dst,sigma_s,sigma_r,maxiter);
+		_mm_store_ps(d+i, _mm_pow_ps(ma, _mm_load_ps(s+i)));
+	}
+	for(;i<size;i++)
+	{
+		d[i] = cv::pow(a, s[i]); 
+	}
+}
+class DomainTransformPowVerticalBGRA_SSE_Invoker : public cv::ParallelLoopBody
+{
+	float a;
+	Mat* out;
+	Mat* dct;
+public:
+	DomainTransformPowVerticalBGRA_SSE_Invoker(Mat& img_, Mat& dct_, float a_) :
+		out(&img_), dct(& dct_), a(a_)
+	{
+		;//for(int x = range.start; x != range.end; x++)
+	}
+	virtual void operator() (const Range& range) const
+	{
+		int width = out->cols;
+		int height = out->rows;
+		int dim3 = 3;
+		int dim = out->channels();
+		const int step = 4*out->cols;
+		const int dtstep = dct->cols;
+		//printf("%d\n",dtstep);
+
+		Mat dtbuff = Mat::zeros(Size(height,1),CV_32F);
+		for(int x = range.start; x != range.end; x++)
+		{
+			int y=1;
+			const __m128 ones = _mm_set1_ps(1.f);
+			const __m128 ma = _mm_set1_ps(a);
+			float* ptr = out->ptr<float>(0)+4*x;
+			__m128 mpreo = _mm_loadu_ps(ptr);
+			float* d = ptr +step;
+			float* dt = dct->ptr<float>(0) + x;
+			float* dtb = dtbuff.ptr<float>(0);
+			int n=0;
+			for(; n<=height-1-4; n+=4)
+			{
+				__m128 mp = _mm_set_ps(dt[(n+3)*dtstep], dt[(n+2)*dtstep],dt[(n+1)*dtstep], dt[(n)*dtstep]);
+				_mm_store_ps(dtb+n, _mm_pow_ps(ma,mp));
+				//pow(a, *dt);
+			}
+			for(; n<height-1; n++)
+			{
+				dtb[n]=pow_fmath(a, dt[n*dtstep]);
+			}
+
+			for(; y<height; y++)
+			{
+				const float p = *dtb;
+
+				__m128 mp = _mm_set1_ps(p);
+				__m128 imp = _mm_sub_ps(ones,mp);
+				__m128 mo = _mm_loadu_ps(d);
+				mpreo = _mm_add_ps( _mm_mul_ps(imp, mo), _mm_mul_ps(mp, mpreo));
+				//mpreo = _mm_add_ps( mo, _mm_mul_ps(mp, _mm_sub_ps(mpreo,mo)));
+
+				_mm_store_ps(d,mpreo);
+
+				d+=step;
+				dt+=dtstep;
+				dtb++;
+			}
+			/*for( ;y<height; y++)
+			{
+			float p = dct.at<float>(y-1, x);
+			for(int c=0; c<dim3; c++)
+			{
+			out.at<float>(y, x*dim+c) = (1.f - p) * out.at<float>(y, x*dim+c) + p * out.at<float>(y-1, x*dim+c);
+			}
+			}*/
+
+			y=height-2;
+			d = ptr + (y)*step;
+			dt = dct->ptr<float>(y) + x;
+			dtb = dtbuff.ptr<float>(0)+y;
+			for(; y>=0; y--)
+			{
+				const float p = *dtb;
+
+				__m128 mp = _mm_set1_ps(p);
+				__m128 imp = _mm_sub_ps(ones,mp);
+				__m128 mo = _mm_loadu_ps(d);
+
+				mpreo = _mm_add_ps( _mm_mul_ps(mp, mpreo), _mm_mul_ps(imp, mo));
+				//mpreo = _mm_add_ps( mo, _mm_mul_ps(mp, _mm_sub_ps(mpreo,mo)));
+				_mm_store_ps(d,mpreo);
+
+				d-=step;
+				dt-=dtstep;
+				dtb--;
+			}
+			/*for(; y>=0; y--)
+			{
+			float p = dct.at<float>(y, x);
+			for(int c=0; c<dim3; c++)
+			{
+			out.at<float>(y, x*dim+c) = p * out.at<float>(y+1, x*dim+c) + (1.f - p) * out.at<float>(y, x*dim+c);
+			}
+			}*/
+		}
+	}
+};
+
+// Recursive filter for vertical direction
+void recursiveFilterPowVerticalBGRA_SSE(cv::Mat& out, cv::Mat& dct, const float a) 
+{
+	int width = out.cols;
+	int height = out.rows;
+	int dim3 = 3;
+	int dim = out.channels();
+
+	const int step = 4*out.cols;
+	const int dtstep = dct.cols;
+	Mat dtbuff = Mat::zeros(Size(height,1),CV_32F);
+
+	for(int x=0; x<width; x++)
+	{
+		int y=1;
+		const __m128 ones = _mm_set1_ps(1.f);
+		const __m128 ma = _mm_set1_ps(a);
+		float* ptr = out.ptr<float>(0)+4*x;
+		__m128 mpreo = _mm_loadu_ps(ptr);
+
+		float* d = ptr +step;
+		float* dt = dct.ptr<float>(0) + x;
+		float* dtb = dtbuff.ptr<float>(0);
+		int n=0;
+		for(; n<=height-1-4; n+=4)
+		{
+			__m128 mp = _mm_set_ps(dt[(n+3)*dtstep], dt[(n+2)*dtstep],dt[(n+1)*dtstep], dt[(n)*dtstep]);
+			_mm_store_ps(dtb+n, _mm_pow_ps(ma,mp));
+		}
+		for(; n<height-1; n++)
+		{
+			dtb[n]=pow_fmath(a, dt[n*dtstep]);
+		}
+
+		for(; y<height; y++)
+		{
+			const float p = *dtb;
+
+			__m128 mp = _mm_set1_ps(p);
+			__m128 imp = _mm_sub_ps(ones,mp);
+			__m128 mo = _mm_loadu_ps(d);
+			mpreo = _mm_add_ps( _mm_mul_ps(imp, mo), _mm_mul_ps(mp, mpreo));
+			_mm_store_ps(d,mpreo);
+
+			d+=step;
+			dt+=dtstep;
+			dtb++;
+		}
+		/*for( ;y<height; y++)
+		{
+		//float p = dct.at<float>(y-1, x);
+		float p = dtb[y-1];
+		for(int c=0; c<dim3; c++)
+		{
+		out.at<float>(y, x*dim+c) = (1.f - p) * out.at<float>(y, x*dim+c) + p * out.at<float>(y-1, x*dim+c);
+		}
+		}*/
+
+		y=height-2;
+		d = ptr + (y)*step;
+		dt = dct.ptr<float>(y) + x;
+		dtb = dtbuff.ptr<float>(0)+y;
+		for(; y>=0; y--)
+		{
+			const float p = *dtb;
+
+			__m128 mp = _mm_set1_ps(p);
+			__m128 imp = _mm_sub_ps(ones,mp);
+			__m128 mo = _mm_loadu_ps(d);
+			mpreo = _mm_add_ps( _mm_mul_ps(mp, mpreo), _mm_mul_ps(imp, mo));
+			_mm_store_ps(d,mpreo);
+
+			d-=step;
+			dt-=dtstep;
+			dtb--;
+		}
+		/*for(; y>=0; y--)
+		{
+		//float p = dct.at<float>(y, x);
+		float p = dtb[y];
+		for(int c=0; c<dim3; c++)
+		{
+		out.at<float>(y, x*dim+c) = p * out.at<float>(y+1, x*dim+c) + (1.f - p) * out.at<float>(y, x*dim+c);
+		}
+		}*/
+	}
+}
+
+
+class DomainTransformBuildDXDY_Invoker : public cv::ParallelLoopBody
+{
+	float ratio;
+	const Mat* src;
+	Mat* dx;
+	Mat* dy;
+
+public:
+	~DomainTransformBuildDXDY_Invoker()
+	{
+		Mat joint = *src;
+		int width = src->cols;
+		int height = src->rows;
+		int dim = src->channels();
+
+		int y = height-1;
+		for(int x=0; x<width-1; x++)
+		{
+			int accumx = 0;
+			for(int c=0; c<dim; c++)
+			{
+				accumx += abs(joint.at<uchar>(y, (x+1)*dim+c) - joint.at<uchar>(y, x*dim+c)); 
+			}
+			dx->at<float>(y, x) = 1.0f + ratio * accumx; 
+		}
+	}
+	DomainTransformBuildDXDY_Invoker(const Mat& img_, Mat& dctx_, Mat& dcty_, float ratio_) :
+		src(&img_), dx(& dctx_), dy(& dcty_),ratio(ratio_)
+	{
+		;
+	}
+	virtual void operator() (const Range& range) const
+	{
+		int width = src->cols;
+		int height = src->rows;
+		int dim = src->channels();
+
+		Mat joint = *src;
+
+		for(int y = range.start; y != range.end; y++)
+			//for(int y=0; y<height-1; y++)
+		{
+			uchar* jc = joint.ptr<uchar>(y);
+			uchar* jp = joint.ptr<uchar>(y+1);
+			float* dxp = dx->ptr<float>(y);
+			float* dyp = dy->ptr<float>(y);
+
+			for(int x=0; x<width-1; x++)
+			{
+				int accumx = 0;
+				int accumy = 0;
+				for(int c=0; c<dim; c++)
+				{
+					accumx += abs(jc[(x+1)*dim+c] - jc[x*dim+c]); 
+					accumy += abs(jp[x*dim+c]     - jc[x*dim+c]); 
+				}
+				dxp[x]= 1.0f + ratio * accumx; 
+				dyp[x]= 1.0f + ratio * accumy; 
+			}
+			int accumy = 0;
+			int x = width -1;
+			for(int c=0; c<dim; c++)
+			{
+				accumy += abs(jp[x*dim+c] - jc[x*dim+c]); 
+			}
+			dyp[x]= 1.0f + ratio * accumy; 	
+		}
+	}
+};
+
+
+
+class DomainTransformPowHorizontalBGRA_SSE_Invoker : public cv::ParallelLoopBody
+{
+	float a;
+	Mat* out;
+	Mat* dct;
+public:
+	DomainTransformPowHorizontalBGRA_SSE_Invoker(Mat& img_, Mat& dct_, float a_) :
+		out(&img_), dct(& dct_), a(a_)
+	{
+		;
+	}
+	virtual void operator() (const Range& range) const
+	{
+		int width = out->cols;
+		int height = out->rows;
+		int dim3 = 3;
+		int dim = out->channels();
+		Mat dtbuff = Mat::zeros(Size(width,1),CV_32F);
+
+		//for(int y=0; y<height; y++)
+		for(int y = range.start; y != range.end; y++)
+		{
+			float* dtb = dtbuff.ptr<float>(0); 
+			float* d = out->ptr<float>(y);
+			float* dt = dct->ptr<float>(y);
+
+			int x;
+
+			const __m128 ones = _mm_set1_ps(1.f);
+			const __m128 ma = _mm_set1_ps(a);
+			__m128 mpreo = _mm_loadu_ps(d);
+			x=1;
+			for(; x<=width-4; x+=4)
+			{
+				__m128 mps = _mm_loadu_ps(dt+x-1);
+				mps = _mm_pow_ps(ma,mps);
+				_mm_storeu_ps(dtb+x-1,mps);
+
+				__m128 mo = _mm_loadu_ps(d+4*x);
+				__m128 mp = _mm_shuffle_ps(mps, mps, 0x00); 
+				__m128 imp = _mm_sub_ps(ones,mp); 
+				mpreo = _mm_add_ps( _mm_mul_ps(imp,mo), _mm_mul_ps(mp,mpreo));
+				_mm_storeu_ps(d+4*x,mpreo);
+
+				mo = _mm_loadu_ps(d+4*(x+1));
+				mp = _mm_shuffle_ps(mps, mps, 0x55); 
+				imp = _mm_sub_ps(ones,mp); 
+				mpreo = _mm_add_ps( _mm_mul_ps(imp,mo), _mm_mul_ps(mp,mpreo));
+				_mm_storeu_ps(d+4*(x+1),mpreo);
+
+				mo = _mm_loadu_ps(d+4*(x+2));
+				mp = _mm_shuffle_ps(mps, mps, 0xAA); 
+				imp = _mm_sub_ps(ones,mp); 
+				mpreo = _mm_add_ps( _mm_mul_ps(imp,mo), _mm_mul_ps(mp,mpreo));
+				_mm_storeu_ps(d+4*(x+2),mpreo);
+
+				mo = _mm_loadu_ps(d+4*(x+3));
+				mp = _mm_shuffle_ps(mps, mps, 0xFF); 
+				imp = _mm_sub_ps(ones,mp); 
+				mpreo = _mm_add_ps( _mm_mul_ps(imp,mo), _mm_mul_ps(mp,mpreo));
+				_mm_storeu_ps(d+4*(x+3),mpreo);
+			}
+			for(; x<width; x++)
+			{
+				float p = pow_fmath(a, dct->at<float>(y, x-1));
+				dtbuff.at<float>(x-1) = p;
+
+				for(int c=0; c<dim3; c++)
+				{
+					out->at<float>(y, x*dim+c) = (1.f - p) * out->at<float>(y, x*dim+c) + p * out->at<float>(y, (x-1)*dim+c);
+				}
+			}
+
+			mpreo = _mm_loadu_ps(d+4*(width-1));
+			x=width-2;
+			for(; x>4; x-=4)
+			{
+				__m128 mps = _mm_loadu_ps(dtb+x-3);
+				//__m128 mps = _mm_loadu_ps(dt+x-3);
+				//mps = _mm_pow_ps(ma,mps);
+
+				__m128 mo = _mm_loadu_ps(d+4*x);
+				__m128 mp = _mm_shuffle_ps(mps, mps, 0xFF); 
+				__m128 imp = _mm_sub_ps(ones,mp); 
+				mpreo = _mm_add_ps( _mm_mul_ps(mp,mpreo), _mm_mul_ps(imp,mo));
+				_mm_storeu_ps(d+4*x,mpreo);
+
+				mo = _mm_loadu_ps(d+4*(x-1));
+				mp = _mm_shuffle_ps(mps, mps, 0xAA); 
+				imp = _mm_sub_ps(ones,mp); 
+				mpreo = _mm_add_ps( _mm_mul_ps(mp,mpreo), _mm_mul_ps(imp,mo));
+				_mm_storeu_ps(d+4*(x-1),mpreo);
+
+				mo = _mm_loadu_ps(d+4*(x-2));
+				mp = _mm_shuffle_ps(mps, mps, 0x55); 
+				imp = _mm_sub_ps(ones,mp); 
+				mpreo = _mm_add_ps( _mm_mul_ps(mp,mpreo), _mm_mul_ps(imp,mo));
+				_mm_storeu_ps(d+4*(x-2),mpreo);
+
+				mo = _mm_loadu_ps(d+4*(x-3));
+				mp = _mm_shuffle_ps(mps, mps, 0x00); 
+				imp = _mm_sub_ps(ones,mp); 
+				mpreo = _mm_add_ps( _mm_mul_ps(mp,mpreo), _mm_mul_ps(imp,mo));
+				_mm_storeu_ps(d+4*(x-3),mpreo);
+			}
+			for(; x>=0; x--)
+			{
+				float p = dtbuff.at<float>(x);
+				for(int c=0; c<dim3; c++)
+				{
+					out->at<float>(y, x*dim+c) = p * out->at<float>(y, (x+1)*dim+c) + (1.f - p) * out->at<float>(y, x*dim+c);
+				}
+			}
+		}
+	}
+};
+
+// Recursive filter for horizontal direction
+void recursiveFilterPowHorizontalBGRA_SSE(cv::Mat& out, cv::Mat& dct, const float a) 
+{
+	int width = out.cols;
+	int height = out.rows;
+	int dim3 = 3;
+	int dim = out.channels();
+	Mat dtbuff = Mat::zeros(Size(width,1),CV_32F);
+
+	for(int y=0; y<height; y++)
+	{
+		float* dtb = dtbuff.ptr<float>(0); 
+		float* d = out.ptr<float>(y);
+		float* dt = dct.ptr<float>(y);
+
+		int x;
+
+		const __m128 ones = _mm_set1_ps(1.f);
+		const __m128 ma = _mm_set1_ps(a);
+		__m128 mpreo = _mm_loadu_ps(d);
+		x=1;
+		for(; x<=width-4; x+=4)
+		{
+			__m128 mps = _mm_loadu_ps(dt+x-1);
+			mps = _mm_pow_ps(ma,mps);
+			_mm_storeu_ps(dtb+x-1,mps);
+
+			__m128 mo = _mm_loadu_ps(d+4*x);
+			__m128 mp = _mm_shuffle_ps(mps, mps, 0x00); 
+			__m128 imp = _mm_sub_ps(ones,mp); 
+			mpreo = _mm_add_ps( _mm_mul_ps(imp,mo), _mm_mul_ps(mp,mpreo));
+			_mm_storeu_ps(d+4*x,mpreo);
+
+			mo = _mm_loadu_ps(d+4*(x+1));
+			mp = _mm_shuffle_ps(mps, mps, 0x55); 
+			imp = _mm_sub_ps(ones,mp); 
+			mpreo = _mm_add_ps( _mm_mul_ps(imp,mo), _mm_mul_ps(mp,mpreo));
+			_mm_storeu_ps(d+4*(x+1),mpreo);
+
+			mo = _mm_loadu_ps(d+4*(x+2));
+			mp = _mm_shuffle_ps(mps, mps, 0xAA); 
+			imp = _mm_sub_ps(ones,mp); 
+			mpreo = _mm_add_ps( _mm_mul_ps(imp,mo), _mm_mul_ps(mp,mpreo));
+			_mm_storeu_ps(d+4*(x+2),mpreo);
+
+			mo = _mm_loadu_ps(d+4*(x+3));
+			mp = _mm_shuffle_ps(mps, mps, 0xFF); 
+			imp = _mm_sub_ps(ones,mp); 
+			mpreo = _mm_add_ps( _mm_mul_ps(imp,mo), _mm_mul_ps(mp,mpreo));
+			_mm_storeu_ps(d+4*(x+3),mpreo);
+		}
+		for(; x<width; x++)
+		{
+			float p = pow_fmath(a, dct.at<float>(y, x-1));
+			dtbuff.at<float>(x-1) = p;
+
+			for(int c=0; c<dim3; c++)
+			{
+				out.at<float>(y, x*dim+c) = (1.f - p) * out.at<float>(y, x*dim+c) + p * out.at<float>(y, (x-1)*dim+c);
+			}
+		}
+
+		mpreo = _mm_loadu_ps(d+4*(width-1));
+		x=width-2;
+		for(; x>4; x-=4)
+		{
+			__m128 mps = _mm_loadu_ps(dtb+x-3);
+			//__m128 mps = _mm_loadu_ps(dt+x-3);
+			//mps = _mm_pow_ps(ma,mps);
+
+			__m128 mo = _mm_loadu_ps(d+4*x);
+			__m128 mp = _mm_shuffle_ps(mps, mps, 0xFF); 
+			__m128 imp = _mm_sub_ps(ones,mp); 
+			mpreo = _mm_add_ps( _mm_mul_ps(mp,mpreo), _mm_mul_ps(imp,mo));
+			_mm_storeu_ps(d+4*x,mpreo);
+
+			mo = _mm_loadu_ps(d+4*(x-1));
+			mp = _mm_shuffle_ps(mps, mps, 0xAA); 
+			imp = _mm_sub_ps(ones,mp); 
+			mpreo = _mm_add_ps( _mm_mul_ps(mp,mpreo), _mm_mul_ps(imp,mo));
+			_mm_storeu_ps(d+4*(x-1),mpreo);
+
+			mo = _mm_loadu_ps(d+4*(x-2));
+			mp = _mm_shuffle_ps(mps, mps, 0x55); 
+			imp = _mm_sub_ps(ones,mp); 
+			mpreo = _mm_add_ps( _mm_mul_ps(mp,mpreo), _mm_mul_ps(imp,mo));
+			_mm_storeu_ps(d+4*(x-2),mpreo);
+
+			mo = _mm_loadu_ps(d+4*(x-3));
+			mp = _mm_shuffle_ps(mps, mps, 0x00); 
+			imp = _mm_sub_ps(ones,mp); 
+			mpreo = _mm_add_ps( _mm_mul_ps(mp,mpreo), _mm_mul_ps(imp,mo));
+			_mm_storeu_ps(d+4*(x-3),mpreo);
+		}
+		for(; x>=0; x--)
+		{
+			float p = dtbuff.at<float>(x);
+			for(int c=0; c<dim3; c++)
+			{
+				out.at<float>(y, x*dim+c) = p * out.at<float>(y, (x+1)*dim+c) + (1.f - p) * out.at<float>(y, x*dim+c);
+			}
+		}
+	}
+}
+
+
+// Recursive filter for vertical direction
+void recursiveFilterVerticalBGRA_SSE(cv::Mat& out, cv::Mat& dct) 
+{
+	int width = out.cols;
+	int height = out.rows;
+	int dim3 = 3;
+	int dim = out.channels();
+	const int step = 4*out.cols;
+	const int dtstep = dct.cols;
+	for(int x=0; x<width; x++)
+	{
+		int y=1;
+		const __m128 ones = _mm_set1_ps(1.f);
+		float* ptr = out.ptr<float>(0)+4*x;
+		__m128 mpreo = _mm_loadu_ps(ptr);
+
+		float* d = ptr +step;
+		float* dt = dct.ptr<float>(0) + x;
+		for(; y<height; y++)
+		{
+			float p = *dt;
+
+			__m128 mp = _mm_set1_ps(p);
+			__m128 imp = _mm_sub_ps(ones,mp);
+			__m128 mo = _mm_loadu_ps(d);
+
+			//(1-p) *a + p*b
+			//a + p*(b-a)
+
+			mpreo = _mm_add_ps( _mm_mul_ps(imp, mo), _mm_mul_ps(mp, mpreo));
+			//mpreo = _mm_add_ps( mo, _mm_mul_ps(mp, _mm_sub_ps(mpreo,mo)));
+			_mm_store_ps(d,mpreo);
+
+			d+=step;
+			dt+=dtstep;
+		}
+		/*for( ;y<height; y++)
+		{
+		float p = dct.at<float>(y-1, x);
+		for(int c=0; c<dim3; c++)
+		{
+		out.at<float>(y, x*dim+c) = (1.f - p) * out.at<float>(y, x*dim+c) + p * out.at<float>(y-1, x*dim+c);
+		}
+		}*/
+
+		y=height-2;
+		d = ptr + (y)*step;
+		dt = dct.ptr<float>(y) + x;
+		for(; y>=0; y--)
+		{
+			float p = *dt;
+
+			__m128 mp = _mm_set1_ps(p);
+			__m128 imp = _mm_sub_ps(ones,mp);
+			__m128 mo = _mm_loadu_ps(d);
+			mpreo = _mm_add_ps( _mm_mul_ps(mp, mpreo), _mm_mul_ps(imp, mo));
+			//mpreo = _mm_add_ps( mo, _mm_mul_ps(mp, _mm_sub_ps(mpreo,mo)));
+
+			_mm_store_ps(d,mpreo);
+
+			d-=step;
+			dt-=dtstep;
+		}
+		/*for(; y>=0; y--)
+		{
+		float p = dct.at<float>(y, x);
+		for(int c=0; c<dim3; c++)
+		{
+		out.at<float>(y, x*dim+c) = p * out.at<float>(y+1, x*dim+c) + (1.f - p) * out.at<float>(y, x*dim+c);
+		}
+		}*/
+	}
+}
+
+// Recursive filter for horizontal direction
+void recursiveFilterHorizontalBGRA_SSE(cv::Mat& out, cv::Mat& dct) 
+{
+	int width = out.cols;
+	int height = out.rows;
+	int dim3 = 3;
+	int dim = out.channels();
+
+	for(int y=0; y<height; y++)
+	{
+		float* d = out.ptr<float>(y);
+		float* dt = dct.ptr<float>(y);
+		int x;
+		const __m128 ones = _mm_set1_ps(1.f);
+		__m128 mpreo = _mm_loadu_ps(d);
+
+		x=1;
+		for(; x<=width-4; x+=4)
+		{
+			__m128 mps = _mm_loadu_ps(dt+x-1);
+
+			__m128 mo = _mm_loadu_ps(d+4*x);
+			__m128 mp = _mm_shuffle_ps(mps, mps, 0x00); 
+			__m128 imp = _mm_sub_ps(ones,mp); 
+			mpreo = _mm_add_ps( _mm_mul_ps(imp,mo), _mm_mul_ps(mp,mpreo));
+			_mm_storeu_ps(d+4*x,mpreo);
+
+			mo = _mm_loadu_ps(d+4*(x+1));
+			mp = _mm_shuffle_ps(mps, mps, 0x55); 
+			imp = _mm_sub_ps(ones,mp); 
+			mpreo = _mm_add_ps( _mm_mul_ps(imp,mo), _mm_mul_ps(mp,mpreo));
+			_mm_storeu_ps(d+4*(x+1),mpreo);
+
+			mo = _mm_loadu_ps(d+4*(x+2));
+			mp = _mm_shuffle_ps(mps, mps, 0xAA); 
+			imp = _mm_sub_ps(ones,mp); 
+			mpreo = _mm_add_ps( _mm_mul_ps(imp,mo), _mm_mul_ps(mp,mpreo));
+			_mm_storeu_ps(d+4*(x+2),mpreo);
+
+			mo = _mm_loadu_ps(d+4*(x+3));
+			mp = _mm_shuffle_ps(mps, mps, 0xFF); 
+			imp = _mm_sub_ps(ones,mp); 
+			mpreo = _mm_add_ps( _mm_mul_ps(imp,mo), _mm_mul_ps(mp,mpreo));
+			_mm_storeu_ps(d+4*(x+3),mpreo);
+		}
+		for(; x<width; x++)
+		{
+			float p = dct.at<float>(y, x-1);
+			for(int c=0; c<dim3; c++)
+			{
+				out.at<float>(y, x*dim+c) = (1.f - p) * out.at<float>(y, x*dim+c) + p * out.at<float>(y, (x-1)*dim+c);
+			}
+		}
+
+		mpreo = _mm_loadu_ps(d+4*(width-1));
+		x=width-2;
+		for(; x>4; x-=4)
+		{
+			__m128 mps = _mm_loadu_ps(dt+x-3);
+
+			__m128 mo = _mm_loadu_ps(d+4*x);
+			__m128 mp = _mm_shuffle_ps(mps, mps, 0xFF); 
+			__m128 imp = _mm_sub_ps(ones,mp); 
+			mpreo = _mm_add_ps( _mm_mul_ps(mp,mpreo), _mm_mul_ps(imp,mo));
+			_mm_storeu_ps(d+4*x,mpreo);
+
+			mo = _mm_loadu_ps(d+4*(x-1));
+			mp = _mm_shuffle_ps(mps, mps, 0xAA); 
+			imp = _mm_sub_ps(ones,mp); 
+			mpreo = _mm_add_ps( _mm_mul_ps(mp,mpreo), _mm_mul_ps(imp,mo));
+			_mm_storeu_ps(d+4*(x-1),mpreo);
+
+			mo = _mm_loadu_ps(d+4*(x-2));
+			mp = _mm_shuffle_ps(mps, mps, 0x55); 
+			imp = _mm_sub_ps(ones,mp); 
+			mpreo = _mm_add_ps( _mm_mul_ps(mp,mpreo), _mm_mul_ps(imp,mo));
+			_mm_storeu_ps(d+4*(x-2),mpreo);
+
+			mo = _mm_loadu_ps(d+4*(x-3));
+			mp = _mm_shuffle_ps(mps, mps, 0x00); 
+			imp = _mm_sub_ps(ones,mp); 
+			mpreo = _mm_add_ps( _mm_mul_ps(mp,mpreo), _mm_mul_ps(imp,mo));
+			_mm_storeu_ps(d+4*(x-3),mpreo);
+		}
+		for(; x>=0; x--)
+		{
+			float p = dct.at<float>(y, x);
+			for(int c=0; c<dim3; c++)
+			{
+				out.at<float>(y, x*dim+c) = p * out.at<float>(y, (x+1)*dim+c) + (1.f - p) * out.at<float>(y, x*dim+c);
+			}
+		}
+	}
+}
+
+/*
+const uchar* s = src.ptr<uchar>(0);
+uchar* B = dest.ptr<uchar>(0);//line by line interleave
+uchar* G = dest.ptr<uchar>(1);
+uchar* R = dest.ptr<uchar>(2);
+
+//BGR BGR BGR BGR BGR B
+//GR BGR BGR BGR BGR BG
+//R BGR BGR BGR BGR BGR
+//BBBBBBGGGGGRRRRR shuffle
+const __m128i mask1 = _mm_setr_epi8(0,3,6,9,12,15,1,4,7,10,13,2,5,8,11,14);
+//GGGGGBBBBBBRRRRR shuffle
+const __m128i smask1 = _mm_setr_epi8(6,7,8,9,10,0,1,2,3,4,5,11,12,13,14,15);
+const __m128i ssmask1 = _mm_setr_epi8(11,12,13,14,15,0,1,2,3,4,5,6,7,8,9,10);
+
+//GGGGGGBBBBBRRRRR shuffle
+const __m128i mask2 = _mm_setr_epi8(0,3,6,9,12,15, 2,5,8,11,14,1,4,7,10,13);
+//const __m128i smask2 = _mm_setr_epi8(6,7,8,9,10,0,1,2,3,4,5,11,12,13,14,15);
+const __m128i ssmask2 = _mm_setr_epi8(0,1,2,3,4,11,12,13,14,15,5,6,7,8,9,10);
+
+//RRRRRRGGGGGBBBBB shuffle -> same mask2
+//__m128i mask3 = _mm_setr_epi8(0,3,6,9,12,15, 2,5,8,11,14,1,4,7,10,13);
+
+//const __m128i smask3 = _mm_setr_epi8(6,7,8,9,10,0,1,2,3,4,5,6,7,8,9,10);
+//const __m128i ssmask3 = _mm_setr_epi8(11,12,13,14,15,0,1,2,3,4,5,6,7,8,9,10);
+
+const __m128i bmask1 = _mm_setr_epi8
+(0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0,0,0,0,0,0,0,0,0,0);
+
+const __m128i bmask2 = _mm_setr_epi8
+(0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0,0,0,0,0);
+
+const __m128i bmask3 = _mm_setr_epi8
+(0xFF,0xFF,0xFF,0xFF,0xFF,0,0,0,0,0,0,0,0,0,0,0);
+
+const __m128i bmask4 = _mm_setr_epi8
+(0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0,0,0,0,0,0);	
+
+__m128i a,b,c;
+
+for(int j=0;j<src.rows;j++)
+{
+int i=0;
+for(;i<src.cols;i+=16)
+{
+a = _mm_shuffle_epi8(_mm_load_si128((__m128i*)(s+3*i)),mask1);
+b = _mm_shuffle_epi8(_mm_load_si128((__m128i*)(s+3*i+16)),mask2);
+c = _mm_shuffle_epi8(_mm_load_si128((__m128i*)(s+3*i+32)),mask2);
+_mm_stream_si128((__m128i*)(B+i),_mm_blendv_epi8(c,_mm_blendv_epi8(b,a,bmask1),bmask2));
+
+a = _mm_shuffle_epi8(a,smask1);
+b = _mm_shuffle_epi8(b,smask1);
+c = _mm_shuffle_epi8(c,ssmask1);
+_mm_stream_si128((__m128i*)(G+i),_mm_blendv_epi8(c,_mm_blendv_epi8(b,a,bmask3),bmask2));
+
+a = _mm_shuffle_epi8(a,ssmask1);
+c = _mm_shuffle_epi8(c,ssmask1);
+b = _mm_shuffle_epi8(b,ssmask2);
+
+_mm_stream_si128((__m128i*)(R+i),_mm_blendv_epi8(c,_mm_blendv_epi8(b,a,bmask3),bmask4));
+}
+R+=dstep;
+G+=dstep;
+B+=dstep;
+s+=sstep;
+}
+*/
+
+void buid_dxdyL1_8u(const Mat& src, Mat& dx, Mat& dy, const float ratio)
+{
+	const __m128i mask1 = _mm_setr_epi8(0,3,6,9,12,15,1,4,7,10,13,2,5,8,11,14);
+	const __m128i smask1 = _mm_setr_epi8(6,7,8,9,10,0,1,2,3,4,5,11,12,13,14,15);
+	const __m128i ssmask1 = _mm_setr_epi8(11,12,13,14,15,0,1,2,3,4,5,6,7,8,9,10);
+	const __m128i mask2 = _mm_setr_epi8(0,3,6,9,12,15, 2,5,8,11,14,1,4,7,10,13);
+	const __m128i ssmask2 = _mm_setr_epi8(0,1,2,3,4,11,12,13,14,15,5,6,7,8,9,10);
+	const __m128i bmask1 = _mm_setr_epi8
+		(0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00);
+	const __m128i bmask2 = _mm_setr_epi8
+		(0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0x00,0x00,0x00,0x00,0x00);
+	const __m128i bmask3 = _mm_setr_epi8
+		(0xFF,0xFF,0xFF,0xFF,0xFF,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00);
+	const __m128i bmask4 = _mm_setr_epi8
+		(0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0x00,0x00,0x00,0x00,0x00,0x00);	
+
+//	__m128i a,b,c;
+
+	int width = src.cols;
+	int height = src.rows;
+	int dim = src.channels();
+
+	Mat joint = src;
+	/*
+	for(int y=0; y<height-1; y++)
+	{
+	for(int x=0; x<width-1; x++)
+	{
+	int accumx = 0;
+	int accumy = 0;
+	for(int c=0; c<dim; c++)
+	{
+	accumx += abs(joint.at<uchar>(y, (x+1)*dim+c) - joint.at<uchar>(y, x*dim+c)); 
+	accumy += abs(joint.at<uchar>(y+1, x*dim+c) - joint.at<uchar>(y, x*dim+c)); 
+	}
+	dx.at<float>(y, x) = 1.0f + ratio * accumx; 
+	dy.at<float>(y, x) = 1.0f + ratio * accumy; 
+	}
+	int accumy = 0;
+	int x = width -1;
+	for(int c=0; c<dim; c++)
+	{
+	accumy += abs(joint.at<uchar>(y+1, x*dim+c) - joint.at<uchar>(y, x*dim+c)); 
+	}
+	dy.at<float>(y, x) = 1.0f + ratio * accumy; 
+	}
+	int y = height-1;
+	for(int x=0; x<width-1; x++)
+	{
+	int accumx = 0;
+	for(int c=0; c<dim; c++)
+	{
+	accumx += abs(joint.at<uchar>(y, (x+1)*dim+c) - joint.at<uchar>(y, x*dim+c)); 
+	}
+	dx.at<float>(y, x) = 1.0f + ratio * accumx; 
+	}
+	*/
+
+	//	abs(jc[(x+3)+0] - jc[x+0]);
+
+	//v
+	//	abs(jp[x+0]     - jc[x+0]); 
+	/*
+	for(int y=0; y<height-1; y++)
+	{
+	uchar* jc = joint.ptr<uchar>(y);
+	uchar* jp = joint.ptr<uchar>(y+1);
+	float* dxp = dx.ptr<float>(y);
+	float* dyp = dy.ptr<float>(y);
+
+	int x=0;
+	const __m128i zero = _mm_setzero_si128();
+	const __m128 ones = _mm_set1_ps(1.f);
+	const __m128 mratio = _mm_set1_ps(ratio);
+
+	for(; x<=width-1; x+=16)
+	{
+	a = _mm_shuffle_epi8(_mm_loadu_si128((__m128i*)(jc+3*x)),mask1);
+	b = _mm_shuffle_epi8(_mm_loadu_si128((__m128i*)(jc+3*x+16)),mask2);
+	c = _mm_shuffle_epi8(_mm_loadu_si128((__m128i*)(jc+3*x+32)),mask2);
+
+	__m128i mB = _mm_blendv_epi8(c,_mm_blendv_epi8(b,a,bmask1),bmask2);
+
+	a = _mm_shuffle_epi8(a,smask1);
+	b = _mm_shuffle_epi8(b,smask1);
+	c = _mm_shuffle_epi8(c,ssmask1);
+	__m128i mG = _mm_blendv_epi8(c,_mm_blendv_epi8(b,a,bmask3),bmask2);
+
+
+	a = _mm_shuffle_epi8(a,ssmask1);
+	c = _mm_shuffle_epi8(c,ssmask1);
+	b = _mm_shuffle_epi8(b,ssmask2);
+
+	__m128i mR = _mm_blendv_epi8(c,_mm_blendv_epi8(b,a,bmask3),bmask4);
+
+
+
+	a = _mm_shuffle_epi8(_mm_loadu_si128((__m128i*)(jc+3*(x+1))),mask1);
+	b = _mm_shuffle_epi8(_mm_loadu_si128((__m128i*)(jc+3*(x+1)+16)),mask2);
+	c = _mm_shuffle_epi8(_mm_loadu_si128((__m128i*)(jc+3*(x+1)+32)),mask2);
+
+	__m128i mNB = _mm_blendv_epi8(c,_mm_blendv_epi8(b,a,bmask1),bmask2);
+
+	a = _mm_shuffle_epi8(a,smask1);
+	b = _mm_shuffle_epi8(b,smask1);
+	c = _mm_shuffle_epi8(c,ssmask1);
+	__m128i mNG = _mm_blendv_epi8(c,_mm_blendv_epi8(b,a,bmask3),bmask2);
+
+
+	a = _mm_shuffle_epi8(a,ssmask1);
+	c = _mm_shuffle_epi8(c,ssmask1);
+	b = _mm_shuffle_epi8(b,ssmask2);
+
+	__m128i mNR = _mm_blendv_epi8(c,_mm_blendv_epi8(b,a,bmask3),bmask4);
+
+	a = _mm_shuffle_epi8(_mm_loadu_si128((__m128i*)(jp+3*x)),mask1);
+	b = _mm_shuffle_epi8(_mm_loadu_si128((__m128i*)(jp+3*x+16)),mask2);
+	c = _mm_shuffle_epi8(_mm_loadu_si128((__m128i*)(jp+3*x+32)),mask2);
+
+	__m128i mPB = _mm_blendv_epi8(c,_mm_blendv_epi8(b,a,bmask1),bmask2);
+
+	a = _mm_shuffle_epi8(a,smask1);
+	b = _mm_shuffle_epi8(b,smask1);
+	c = _mm_shuffle_epi8(c,ssmask1);
+	__m128i mPG = _mm_blendv_epi8(c,_mm_blendv_epi8(b,a,bmask3),bmask2);
+
+	a = _mm_shuffle_epi8(a,ssmask1);
+	c = _mm_shuffle_epi8(c,ssmask1);
+	b = _mm_shuffle_epi8(b,ssmask2);
+
+	__m128i mPR = _mm_blendv_epi8(c,_mm_blendv_epi8(b,a,bmask3),bmask4);
+
+	__m128i diff8 = _mm_add_epi8(_mm_subs_epu8(mB,mNB),_mm_subs_epu8(mNR,mB));
+	__m128i diff16_f = _mm_unpackhi_epi8(diff8,zero);
+	__m128i diff16_b = _mm_unpacklo_epi8(diff8,zero);
+
+	diff8 = _mm_add_epi8(_mm_subs_epu8(mG,mNG),_mm_subs_epu8(mNG,mG));
+
+	diff16_f = _mm_add_epi16(diff16_f,_mm_unpackhi_epi8(diff8,zero));
+	diff16_b = _mm_add_epi16(diff16_b,_mm_unpacklo_epi8(diff8,zero));
+
+	diff8 = _mm_add_epi8(_mm_subs_epu8(mR,mNR),_mm_subs_epu8(mNR,mR));
+
+	diff16_f = _mm_add_epi16(diff16_f,_mm_unpackhi_epi8(diff8,zero));
+	diff16_b = _mm_add_epi16(diff16_b,_mm_unpacklo_epi8(diff8,zero));
+
+	__m128i n1 = _mm_unpackhi_epi16(diff16_f,zero);
+	__m128i n2 = _mm_unpacklo_epi16(diff16_f,zero);
+	__m128i n3 = _mm_unpackhi_epi16(diff16_b,zero);
+	__m128i n4 = _mm_unpacklo_epi16(diff16_b,zero);
+
+	__m128 diff0 = _mm_cvtepi32_ps(n2);
+	__m128 diff1 = _mm_cvtepi32_ps(n1);
+	__m128 diff2 = _mm_cvtepi32_ps(n4);
+	__m128 diff3 = _mm_cvtepi32_ps(n3);
+
+	_mm_storeu_ps(dxp+x, _mm_add_ps(ones,_mm_mul_ps(mratio,diff0)));
+	_mm_storeu_ps(dxp+x+4, _mm_add_ps(ones,_mm_mul_ps(mratio,diff1)));
+	_mm_storeu_ps(dxp+x+8, _mm_add_ps(ones,_mm_mul_ps(mratio,diff2)));
+	_mm_storeu_ps(dxp+x+12, _mm_add_ps(ones,_mm_mul_ps(mratio,diff3)));
+
+
+
+	/////v
+	diff8 = _mm_add_epi8(_mm_subs_epu8(mB,mPB),_mm_subs_epu8(mPR,mB));
+	diff16_f = _mm_unpackhi_epi8(diff8,zero);
+	diff16_b = _mm_unpacklo_epi8(diff8,zero);
+
+	diff8 = _mm_add_epi8(_mm_subs_epu8(mG,mPG),_mm_subs_epu8(mPG,mG));
+
+	diff16_f = _mm_add_epi16(diff16_f,_mm_unpackhi_epi8(diff8,zero));
+	diff16_b = _mm_add_epi16(diff16_b,_mm_unpacklo_epi8(diff8,zero));
+
+	diff8 = _mm_add_epi8(_mm_subs_epu8(mR,mPR),_mm_subs_epu8(mNR,mR));
+
+	diff16_f = _mm_add_epi16(diff16_f,_mm_unpackhi_epi8(diff8,zero));
+	diff16_b = _mm_add_epi16(diff16_b,_mm_unpacklo_epi8(diff8,zero));
+
+	n1 = _mm_unpackhi_epi16(diff16_f,zero);
+	n2 = _mm_unpacklo_epi16(diff16_f,zero);
+	n3 = _mm_unpackhi_epi16(diff16_b,zero);
+	n4 = _mm_unpacklo_epi16(diff16_b,zero);
+
+	diff0 = _mm_cvtepi32_ps(n2);
+	diff1 = _mm_cvtepi32_ps(n1);
+	diff2 = _mm_cvtepi32_ps(n4);
+	diff3 = _mm_cvtepi32_ps(n3);
+
+	_mm_storeu_ps(dyp+x, _mm_add_ps(ones,_mm_mul_ps(mratio,diff0)));
+	_mm_storeu_ps(dyp+x+4, _mm_add_ps(ones,_mm_mul_ps(mratio,diff1)));
+	_mm_storeu_ps(dyp+x+8, _mm_add_ps(ones,_mm_mul_ps(mratio,diff2)));
+	_mm_storeu_ps(dyp+x+12, _mm_add_ps(ones,_mm_mul_ps(mratio,diff3)));
+	}
+
+	for(; x<width-1; x++)
+	{
+	int accumx = 0;
+	int accumy = 0;
+	for(int c=0; c<dim; c++)
+	{
+	accumx += abs(jc[(x+1)*dim+c] - jc[x*dim+c]); 
+	accumy += abs(jp[x*dim+c]     - jc[x*dim+c]); 
+	}
+	dxp[x]= 1.0f + ratio * accumx; 
+	dyp[x]= 1.0f + ratio * accumy; 
+	}
+	int accumy = 0;
+	x = width -1;
+	for(int c=0; c<dim; c++)
+	{
+	accumy += abs(jp[x*dim+c] - jc[x*dim+c]); 
+	}
+	dyp[x]= 1.0f + ratio * accumy; 	
+	}*/
+
+	//#pragma omp parallel for
+	for(int y=0; y<height-1; y++)
+	{
+		uchar* jc = joint.ptr<uchar>(y);
+		uchar* jp = joint.ptr<uchar>(y+1);
+		float* dxp = dx.ptr<float>(y);
+		float* dyp = dy.ptr<float>(y);
+
+		for(int x=0; x<width-1; x++)
+		{
+			int accumx = 0;
+			int accumy = 0;
+			for(int c=0; c<dim; c++)
+			{
+				accumx += abs(jc[(x+1)*dim+c] - jc[x*dim+c]); 
+				accumy += abs(jp[x*dim+c]     - jc[x*dim+c]); 
+			}
+			dxp[x]= 1.0f + ratio * accumx; 
+			dyp[x]= 1.0f + ratio * accumy; 
+		}
+		int accumy = 0;
+		int x = width -1;
+		for(int c=0; c<dim; c++)
+		{
+			accumy += abs(jp[x*dim+c] - jc[x*dim+c]); 
+		}
+		dyp[x]= 1.0f + ratio * accumy; 	
+	}
+
+
+	int y = height-1;
+	for(int x=0; x<width-1; x++)
+	{
+		int accumx = 0;
+		for(int c=0; c<dim; c++)
+		{
+			accumx += abs(joint.at<uchar>(y, (x+1)*dim+c) - joint.at<uchar>(y, x*dim+c)); 
+		}
+		dx.at<float>(y, x) = 1.0f + ratio * accumx; 
+	}
+}
+
+/*
+void buid_ct_L_8u(const Mat& src, Mat& ct_x, Mat& ct_y, const float ratio, int th)
+{
+	int width = src.cols;
+	int height = src.rows;
+	int dim = src.channels();
+
+	Mat joint = src;
+	
+	memset(ct_y.ptr<float>(0), 0, sizeof(float)*width);
+
+	//#pragma omp parallel for
+	for(int y=0; y<height-1; y++)
+	{
+		uchar* jc = joint.ptr<uchar>(y);
+		uchar* jp = joint.ptr<uchar>(y+1);
+		float* ctx = ct_x.ptr<float>(y);
+		ctx[0]=0.f;
+		float* ctyp = ct_y.ptr<float>(y);
+		float* cty = ct_y.ptr<float>(y+1);
+		
+
+		for(int x=0; x<width-1; x++)
+		{
+			int accumx = 0;
+			int accumy = 0;
+			for(int c=0; c<dim; c++)
+			{
+				//accumx += (abs(jc[(x+1)*dim+c] - jc[x*dim+c])<th) ? 0 :abs(jc[(x+1)*dim+c] - jc[x*dim+c]); 
+				//accumy += (abs(jp[x*dim+c]     - jc[x*dim+c])<th) ? 0 : abs(jp[x*dim+c]     - jc[x*dim+c]); 
+				accumx += max(abs(jc[(x+1)*dim+c] - jc[x*dim+c])-th,0); 
+				accumy += max(abs(jp[x*dim+c]     - jc[x*dim+c])-th,0);
+			}
+			ctx[x+1] = ctx[x] + 1.0f + ratio * accumx; 
+			cty[x]= ctyp[x]+ 1.0f + ratio * accumy; 
+		}
+		int accumy = 0;
+		int x = width -1;
+		for(int c=0; c<dim; c++)
+		{
+			accumy += max(abs(jp[x*dim+c] - jc[x*dim+c])-th,0); 
+		}
+		cty[x]= ctyp[x]+ 1.0f + ratio * accumy; 
+	}
+
+	int y = height-1;
+	float* ctx = ct_x.ptr<float>(y);
+	ctx[0]=0.f;
+	for(int x=0; x<width-1; x++)
+	{
+		int accumx = 0;
+		for(int c=0; c<dim; c++)
+		{
+			accumx += max(abs(joint.at<uchar>(y, (x+1)*dim+c) - joint.at<uchar>(y, x*dim+c))-th,0); 
+		}
+		ctx[x+1] = ctx[x] + 1.0f + ratio * accumx; 
+	}
+}
+*/
+void buid_ct_L1_8u(const Mat& src, Mat& ct_x, Mat& ct_y, const float ratio)
+{
+	int width = src.cols;
+	int height = src.rows;
+	int dim = src.channels();
+
+	Mat joint = src;
+	
+	memset(ct_y.ptr<float>(0), 0, sizeof(float)*width);
+
+	//#pragma omp parallel for
+	for(int y=0; y<height-1; y++)
+	{
+		uchar* jc = joint.ptr<uchar>(y);
+		uchar* jp = joint.ptr<uchar>(y+1);
+		float* ctx = ct_x.ptr<float>(y);
+		ctx[0]=0.f;
+		float* ctyp = ct_y.ptr<float>(y);
+		float* cty = ct_y.ptr<float>(y+1);
+		
+		for(int x=0; x<width-1; x++)
+		{
+			int accumx = 0;
+			int accumy = 0;
+			for(int c=0; c<dim; c++)
+			{
+				accumx += abs(jc[(x+1)*dim+c] - jc[x*dim+c]); 
+				accumy += abs(jp[x*dim+c]     - jc[x*dim+c]); 
+			}
+			ctx[x+1] = ctx[x] + 1.0f + ratio * accumx; 
+			cty[x]= ctyp[x]+ 1.0f + ratio * accumy; 
+		}
+		int accumy = 0;
+		int x = width -1;
+		for(int c=0; c<dim; c++)
+		{
+			accumy += abs(jp[x*dim+c] - jc[x*dim+c]); 
+		}
+		cty[x]= ctyp[x]+ 1.0f + ratio * accumy; 
+	}
+
+	int y = height-1;
+	float* ctx = ct_x.ptr<float>(y);
+	ctx[0]=0.f;
+	for(int x=0; x<width-1; x++)
+	{
+		int accumx = 0;
+		for(int c=0; c<dim; c++)
+		{
+			accumx += abs(joint.at<uchar>(y, (x+1)*dim+c) - joint.at<uchar>(y, x*dim+c)); 
+		}
+		ctx[x+1] = ctx[x] + 1.0f + ratio * accumx; 
+	}
+}
+
+void buid_ct_L1_32f(const Mat& src, Mat& ct_x, Mat& ct_y, const float ratio)
+{
+	int width = src.cols;
+	int height = src.rows;
+	int dim = src.channels();
+
+	Mat joint = src;
+	
+	memset(ct_y.ptr<float>(0), 0, sizeof(float)*width);
+
+	//#pragma omp parallel for
+	for(int y=0; y<height-1; y++)
+	{
+		float* jc = joint.ptr<float>(y);
+		float* jp = joint.ptr<float>(y+1);
+		float* ctx = ct_x.ptr<float>(y);
+		ctx[0]=0.f;
+		float* ctyp = ct_y.ptr<float>(y);
+		float* cty = ct_y.ptr<float>(y+1);
+		
+
+		for(int x=0; x<width-1; x++)
+		{
+			float accumx = 0.f;
+			float accumy = 0.f;
+			for(int c=0; c<dim; c++)
+			{
+				accumx += abs(jc[(x+1)*dim+c] - jc[x*dim+c]); 
+				accumy += abs(jp[x*dim+c]     - jc[x*dim+c]); 
+			}
+			ctx[x+1] = ctx[x] + 1.0f + ratio * accumx; 
+			cty[x]= ctyp[x]+ 1.0f + ratio * accumy; 
+		}
+		float accumy = 0.f;
+		int x = width -1;
+		for(int c=0; c<dim; c++)
+		{
+			accumy += abs(jp[x*dim+c] - jc[x*dim+c]); 
+		}
+		cty[x]= ctyp[x]+ 1.0f + ratio * accumy; 
+	}
+
+	int y = height-1;
+	float* ctx = ct_x.ptr<float>(y);
+	ctx[0]=0.f;
+	for(int x=0; x<width-1; x++)
+	{
+		float accumx = 0.f;
+		for(int c=0; c<dim; c++)
+		{
+			accumx += abs(joint.at<uchar>(y, (x+1)*dim+c) - joint.at<uchar>(y, x*dim+c)); 
+		}
+		ctx[x+1] = ctx[x] + 1.0f + ratio * accumx; 
+	}
+}
+
+void buid_ct_absL2_8u(const Mat& src, Mat& ct_x, Mat& ct_y, const float ratio)
+{
+	int width = src.cols;
+	int height = src.rows;
+	int dim = src.channels();
+	const float ratio2 = ratio*ratio;
+
+	Mat joint = src;
+	memset(ct_y.ptr<float>(0), 0, sizeof(float)*width);
+
+	for(int y=0; y<height-1; y++)
+	{
+		uchar* jc = joint.ptr<uchar>(y);
+		uchar* jp = joint.ptr<uchar>(y+1);
+		float* ctx = ct_x.ptr<float>(y);
+		ctx[0]=0.f;
+		float* ctyp = ct_y.ptr<float>(y);
+		float* cty = ct_y.ptr<float>(y+1);
+
+		for(int x=0; x<width-1; x++)
+		{
+			int accumx = 0;
+			int accumy = 0;
+			for(int c=0; c<dim; c++)
+			{
+				accumx += abs((int)(jc[(x+1)*dim+c] - jc[x*dim+c])); 
+				accumy += abs((int)(jp[x*dim+c]     - jc[x*dim+c])); 
+			}
+			accumx = pow2(accumx); 
+			accumy = pow2(accumy); 
+			//ctx[x+1] = ctx[x] + sqrt(ratio2 + ratio2 * accumx); 
+			//cty[x]= ctyp[x]+ sqrt(ratio2 + ratio2 * accumy); 
+			ctx[x+1] = ctx[x] + sqrt(1.f + ratio2 * accumx); 
+			cty[x]= ctyp[x]+ sqrt(1.f + ratio2 * accumy); 
+		}
+		int accumy = 0;
+		int x = width -1;
+		for(int c=0; c<dim; c++)
+		{
+			accumy += abs((int)(jp[x*dim+c]     - jc[x*dim+c])); 
+		}
+		accumy = pow2(accumy); 
+		//cty[x]= ctyp[x]+ sqrt(ratio2 + ratio2 * accumy); 
+		cty[x]= ctyp[x]+ sqrt(1.f + ratio2 * accumy); 
+	}
+
+	int y = height-1;
+	float* ctx = ct_x.ptr<float>(y);
+	ctx[0]=0.f;
+	for(int x=0; x<width-1; x++)
+	{
+		int accumx = 0;
+		for(int c=0; c<dim; c++)
+		{
+			accumx += abs((int)(joint.at<uchar>(y, (x+1)*dim+c) - joint.at<uchar>(y, x*dim+c))); 
+		}
+		accumx = pow2(accumx); 
+		//ctx[x+1] = ctx[x] + sqrt(ratio2 + ratio2 * accumx); 
+		ctx[x+1] = ctx[x] + sqrt(1.f + ratio2 * accumx); 
+	}
+}
+
+void buid_ct_L2_8u(const Mat& src, Mat& ct_x, Mat& ct_y, const float ratio)
+{
+	int width = src.cols;
+	int height = src.rows;
+	int dim = src.channels();
+	const float ratio2 = ratio*ratio;
+
+	Mat joint = src;
+	memset(ct_y.ptr<float>(0), 0, sizeof(float)*width);
+
+	for(int y=0; y<height-1; y++)
+	{
+		uchar* jc = joint.ptr<uchar>(y);
+		uchar* jp = joint.ptr<uchar>(y+1);
+		float* ctx = ct_x.ptr<float>(y);
+		ctx[0]=0.f;
+		float* ctyp = ct_y.ptr<float>(y);
+		float* cty = ct_y.ptr<float>(y+1);
+
+		for(int x=0; x<width-1; x++)
+		{
+			int accumx = 0;
+			int accumy = 0;
+			for(int c=0; c<dim; c++)
+			{
+				accumx += pow2((int)(jc[(x+1)*dim+c] - jc[x*dim+c])); 
+				accumy += pow2((int)(jp[x*dim+c]     - jc[x*dim+c])); 
+			}
+			//ctx[x+1] = ctx[x] + sqrt(ratio2 + ratio2 * accumx); 
+			//cty[x]= ctyp[x]+ sqrt(ratio2 + ratio2 * accumy); 
+			ctx[x+1] = ctx[x] + sqrt(1.f + ratio2 * accumx); 
+			cty[x]= ctyp[x]+ sqrt(1.f + ratio2 * accumy); 
+		}
+		int accumy = 0;
+		int x = width -1;
+		for(int c=0; c<dim; c++)
+		{
+			accumy += pow2((int)(jp[x*dim+c] - jc[x*dim+c])); 
+		}
+		//cty[x]= ctyp[x]+ sqrt(ratio2 + ratio2 * accumy); 
+		cty[x]= ctyp[x]+ sqrt(1.f + ratio2 * accumy); 
+	}
+
+	int y = height-1;
+	float* ctx = ct_x.ptr<float>(y);
+	ctx[0]=0.f;
+	for(int x=0; x<width-1; x++)
+	{
+		int accumx = 0;
+		for(int c=0; c<dim; c++)
+		{
+			accumx += pow2((int)(joint.at<uchar>(y, (x+1)*dim+c) - joint.at<uchar>(y, x*dim+c))); 
+		}
+		//ctx[x+1] = ctx[x] + sqrt(ratio2 + ratio2 * accumx); 
+		ctx[x+1] = ctx[x] + sqrt(1.f + ratio2 * accumx); 
+	}
+}
+
+void buid_ct_L2_32f(const Mat& src, Mat& ct_x, Mat& ct_y, const float ratio)
+{
+	int width = src.cols;
+	int height = src.rows;
+	int dim = src.channels();
+	const float ratio2 = ratio*ratio;
+
+	Mat joint = src;
+	memset(ct_y.ptr<float>(0), 0, sizeof(float)*width);
+
+	for(int y=0; y<height-1; y++)
+	{
+		float* jc = joint.ptr<float>(y);
+		float* jp = joint.ptr<float>(y+1);
+		float* ctx = ct_x.ptr<float>(y);
+		ctx[0]=0.f;
+		float* ctyp = ct_y.ptr<float>(y);
+		float* cty = ct_y.ptr<float>(y+1);
+
+		for(int x=0; x<width-1; x++)
+		{
+			float accumx = 0.f;
+			float accumy = 0.f;
+			for(int c=0; c<dim; c++)
+			{
+				accumx += pow2(jc[(x+1)*dim+c] - jc[x*dim+c]); 
+				accumy += pow2(jp[x*dim+c]     - jc[x*dim+c]); 
+			}
+			ctx[x+1] = ctx[x] + sqrt(ratio2 + ratio2 * accumx); 
+			cty[x]= ctyp[x]+ sqrt(ratio2 + ratio2 * accumy); 
+		}
+		float accumy = 0.f;
+		int x = width -1;
+		for(int c=0; c<dim; c++)
+		{
+			accumy += pow2(jp[x*dim+c] - jc[x*dim+c]); 
+		}
+		cty[x]= ctyp[x]+ sqrt(ratio2 + ratio2 * accumy); 
+	}
+
+	int y = height-1;
+	float* ctx = ct_x.ptr<float>(y);
+	ctx[0]=0.f;
+	for(int x=0; x<width-1; x++)
+	{
+		float accumx = 0.f;
+		for(int c=0; c<dim; c++)
+		{
+			accumx += pow2(joint.at<float>(y, (x+1)*dim+c) - joint.at<float>(y, x*dim+c)); 
+		}
+		ctx[x+1] = ctx[x] + sqrt(ratio2 + ratio2 * accumx); 
+	}
+}
+
+void cunsum_32f(const Mat& src, Mat& dest)
+{
+	for(int j=0;j<src.rows;j++)
+	{
+		float* s = (float*)src.ptr<float>(j);
+		float* d = dest.ptr<float>(j);
+
+		d[0]=s[0];
+		for(int i=1;i<src.cols;i++)
+		{
+			d[i]=s[i]+d[i-1];
+		}
+	}
+}
+
+void cunsum_32f(Mat& inplace)
+{
+	for(int j=0;j<inplace.rows;j++)
+	{
+		float* s = (float*)inplace.ptr<float>(j);
+		for(int i=1;i<inplace.cols;i++)
+		{
+			s[i]+=s[i-1];
+		}
+	}
+}
+
+void buid_dxdyL2_8u(const Mat& src, Mat& dx, Mat& dy, const float ratio)
+{
+	int width = src.cols;
+	int height = src.rows;
+	int dim = src.channels();
+
+	Mat joint = src;
+	const float ratio2 = ratio*ratio;
+	for(int y=0; y<height-1; y++)
+	{
+		uchar* jc = joint.ptr<uchar>(y);
+		uchar* jp = joint.ptr<uchar>(y+1);
+		float* dxp = dx.ptr<float>(y);
+		float* dyp = dy.ptr<float>(y);
+
+		for(int x=0; x<width-1; x++)
+		{
+			int accumx = 0;
+			int accumy = 0;
+			for(int c=0; c<dim; c++)
+			{
+				int v = (jc[(x+1)*dim+c] - jc[x*dim+c]);
+				accumx += v*v; 
+				v = (jp[x*dim+c]     - jc[x*dim+c]);
+				accumy += v*v; 
+			}
+			dxp[x]= sqrt(ratio2 + ratio2 * accumx); 
+			dyp[x]= sqrt(ratio2 + ratio2 * accumy); 
+		}
+		int accumy = 0;
+		int x = width -1;
+		for(int c=0; c<dim; c++)
+		{
+			int v = (jp[x*dim+c] - jc[x*dim+c]);
+			accumy +=v*v; 
+		}
+		dyp[x]= sqrt(ratio2 + ratio2 * accumy); 
+	}
+
+	int y = height-1;
+	for(int x=0; x<width-1; x++)
+	{
+		int accumx = 0;
+		for(int c=0; c<dim; c++)
+		{
+			int v = (joint.at<uchar>(y, (x+1)*dim+c) - joint.at<uchar>(y, x*dim+c));
+			accumx += v*v; 
+		}
+		dx.at<float>(y, x) = sqrt(ratio2 + ratio2 * accumx); 
+	}
+}
+
+void buid_dxdyL1_32f(const Mat& src, Mat& dx, Mat& dy, const float ratio)
+{
+	int width = src.cols;
+	int height = src.rows;
+	int dim = src.channels();
+
+	Mat joint = src;
+
+	for(int y=0; y<height; y++)
+	{
+		for(int x=0; x<width-1; x++)
+		{
+			float accum = 0.0f;
+			for(int c=0; c<dim; c++)
+			{
+				accum += abs(joint.at<float>(y, (x+1)*dim+c) - joint.at<float>(y, x*dim+c)); 
+			}
+			dx.at<float>(y, x) = 1.0f + ratio * accum; 
+		}
+	}
+	for(int y=0; y<height-1; y++)
+	{
+		for(int x=0; x<width; x++)  
+		{
+			float accum = 0.0f;
+			for(int c=0; c<dim; c++)
+			{
+				accum += abs(joint.at<float>(y+1, x*dim+c) - joint.at<float>(y, x*dim+c)); 
+			}
+
+			dy.at<float>(y, x) = 1.0f + ratio * accum; 
+		}
+	}
+}
+
+void buid_dxdyL2_32f(const Mat& src, Mat& dx, Mat& dy, const float ratio)
+{
+	int width = src.cols;
+	int height = src.rows;
+	int dim = src.channels();
+
+	Mat joint = src;
+	float ratio2 = ratio*ratio;
+	for(int y=0; y<height; y++)
+	{
+		for(int x=0; x<width-1; x++)
+		{
+			float accum = 0.0f;
+			for(int c=0; c<dim; c++)
+			{
+				float v = joint.at<float>(y, (x+1)*dim+c) - joint.at<float>(y, x*dim+c);
+				accum += v*v; 
+			}
+			dx.at<float>(y, x) = sqrt(ratio2 + ratio2 * accum); 
+		}
+	}
+	for(int y=0; y<height-1; y++)
+	{
+		for(int x=0; x<width; x++)  
+		{
+			float accum = 0.0f;
+			for(int c=0; c<dim; c++)
+			{
+				float v = joint.at<float>(y+1, x*dim+c) - joint.at<float>(y, x*dim+c);
+				accum += v*v; 
+			}
+
+			dy.at<float>(y, x) = sqrt(ratio2 + ratio2 * accum); 
+		}
+	}
+}
+
+
+// Domain transform filtering: fast implimentation for optimization BGR2BGR2 ->SSE optimization
+void domainTransformFilter_RF_BGRA_SSE_PARALLEL(const Mat& src, const Mat& guide, Mat& dest, float sigma_r, float sigma_s, int maxiter, int norm)
+{
+	Mat img;
+	cvtColorBGR8u2BGRA32f(src,img);
+
+	int width = img.cols;
+	int height = img.rows;
+
+	// compute derivatives of transformed domain "dct"
+	cv::Mat dctx = cv::Mat::zeros(height, width-1, CV_32FC1);
+	cv::Mat dcty = cv::Mat::zeros(height-1, width, CV_32FC1);
+	float ratio = (sigma_s / sigma_r);
+
+	if(guide.depth()==CV_8U)
+	{
+		if(norm == DTF_L1) 
+		{
+			DomainTransformBuildDXDY_Invoker B(guide, dctx, dcty, ratio);
+			parallel_for_(Range(0, height-1), B);
+		}
+		else if(norm == DTF_L2) buid_dxdyL2_8u(guide, dctx,dcty,ratio);
 	}
 	else
 	{
-		cout<<"Now, Only Recursive Filtering is Supported.\n";
+		Mat guidef;
+		guide.convertTo(guidef, CV_32F);
+		if(norm == DTF_L1) buid_dxdyL1_32f(guidef, dctx,dcty,ratio);
+		else if(norm == DTF_L2) buid_dxdyL2_32f(guidef, dctx,dcty,ratio);
+	}
+
+	// Apply recursive folter maxiter times
+	int i=maxiter;
+	Mat out = img.clone();
+	while(i--)
+	{
+		float sigma_h = (float) (sigma_s * sqrt(3.0) * pow(2.0,(maxiter - (i+1))) / sqrt(pow(4.0,maxiter) -1));
+		// and a = exp(-sqrt(2) / sigma_H) to the power of "dct"
+
+		float a = (float)exp(-sqrt(2.0) / sigma_h);
+		{
+			DomainTransformPowHorizontalBGRA_SSE_Invoker H(out, dctx, a);
+			parallel_for_(Range(0, height), H);			
+		}
+		{
+			DomainTransformPowVerticalBGRA_SSE_Invoker V(out, dcty, a);
+			parallel_for_(Range(0, width), V);			
+		}
+		
+	}
+	cvtColorBGRA32f2BGR8u(out,dest);
+}
+
+//single rgba
+// Domain transform filtering: fast implimentation for optimization BGR2BGR2 ->SSE optimization
+void domainTransformFilter_RF_BGRA_SSE_SINGLE(const Mat& src, const Mat& guide, Mat& dest, float sigma_r, float sigma_s, int maxiter, int norm)
+{
+	Mat img;
+	cvtColorBGR8u2BGRA32f(src,img);
+
+	int width = img.cols;
+	int height = img.rows;
+
+	// compute derivatives of transformed domain "dct"
+	cv::Mat dctx = cv::Mat::zeros(height, width-1, CV_32FC1);
+	cv::Mat dcty = cv::Mat::zeros(height-1, width, CV_32FC1);
+	float ratio = (sigma_s / sigma_r);
+
+	if(guide.depth()==CV_8U)
+	{
+		if(norm == DTF_L1) buid_dxdyL1_8u(guide, dctx,dcty,ratio);
+		else if(norm == DTF_L2) buid_dxdyL2_8u(guide, dctx,dcty,ratio);
+	}
+	else
+	{
+		Mat guidef;
+		guide.convertTo(guidef, CV_32F);
+
+		if(norm == DTF_L1) buid_dxdyL1_32f(guidef, dctx,dcty,ratio);
+		else if(norm == DTF_L2) buid_dxdyL2_32f(guidef, dctx,dcty,ratio);
+	}
+
+	// Apply recursive folter maxiter times
+	int i=maxiter;
+	while(i--)
+	{
+		float sigma_h = (float) (sigma_s * sqrt(3.0) * pow(2.0,(maxiter - (i+1))) / sqrt(pow(4.0,maxiter) -1));
+		// and a = exp(-sqrt(2) / sigma_H) to the power of "dct"
+		float a = (float)exp(-sqrt(2.0) / sigma_h);
+
+		recursiveFilterPowHorizontalBGRA_SSE(img, dctx, a);
+		recursiveFilterPowVerticalBGRA_SSE(img, dcty, a);
+	}
+
+	cvtColorBGRA32f2BGR8u(img,dest);
+}
+
+void domainTransformFilter_RF_BGRA_SSE_SINGLE(const Mat& src, Mat& dest, float sigma_r, float sigma_s, int maxiter, int norm)
+{
+	domainTransformFilter_RF_BGRA_SSE_SINGLE(src, src, dest, sigma_r, sigma_s, maxiter, norm);
+}
+
+void powMat(const float a , Mat& src, Mat & dest)
+{
+	if(dest.empty())dest.create(src.size(),CV_32F);
+
+	int width = src.cols;
+	int height = src.rows;
+	for(int y=0; y<height; y++)
+	{
+		for(int x=0; x<width; x++)  
+		{
+			dest.at<float>(y, x) = cv::pow(a, src.at<float>(y,x)); 
+		}
 	}
 }
 
 /////////////////////////////////////////////////////////////////////////////////////////
 //for base implimentation of recursive implimentation
-
-
 // Recursive filter for vertical direction
-void recursiveFilterVerticalB(cv::Mat& out, cv::Mat& dct) {
+void recursiveFilterVerticalBGR(cv::Mat& out, cv::Mat& dct) 
+{
 	int width = out.cols;
 	int height = out.rows;
 	int dim = out.channels();
 
-	// if openmp is available, compute in parallel
-#ifdef _OPENMP
-#pragma omp parallel for
-#endif
 	for(int x=0; x<width; x++)
 	{
 		for(int y=1; y<height; y++)
@@ -1389,16 +2604,14 @@ void recursiveFilterVerticalB(cv::Mat& out, cv::Mat& dct) {
 }
 
 // Recursive filter for horizontal direction
-void recursiveFilterHorizontalB(cv::Mat& out, cv::Mat& dct) {
+void recursiveFilterHorizontalBGR(cv::Mat& out, cv::Mat& dct) 
+{
 	int width = out.cols;
 	int height = out.rows;
 	int dim = out.channels();
 
-	// if openmp is available, compute in parallel
-#ifdef _OPENMP
-#pragma omp parallel for
-#endif
-	for(int y=0; y<height; y++) {
+	for(int y=0; y<height; y++)
+	{
 		for(int x=1; x<width; x++)
 		{
 			float p = dct.at<float>(y, x-1);
@@ -1420,63 +2633,930 @@ void recursiveFilterHorizontalB(cv::Mat& out, cv::Mat& dct) {
 }
 
 
-// Domain transform filtering
-void domainTransformFilterbase(cv::Mat& src, cv::Mat& dest, double sigma_s, double sigma_r, int maxiter)
+// Domain transform filtering: baseline implimentation for optimization
+void domainTransformFilter_RF_Base(const Mat& src, const Mat& guide, Mat& dest, float sigma_r, float sigma_s, int maxiter, int norm)
 {
-	Mat img,out;
-	src.convertTo(img, CV_MAKETYPE(CV_32F, src.channels()));
+	Mat img;
+	src.convertTo(img, CV_32F);
 
-	int width = img.cols;
-	int height = img.rows;
-	int dim = img.channels();
+	int width = src.cols;
+	int height = src.rows;
 
 	// compute derivatives of transformed domain "dct"
-	// and a = exp(-sqrt(2) / sigma_H) to the power of "dct"
 	cv::Mat dctx = cv::Mat::zeros(height, width-1, CV_32FC1);
 	cv::Mat dcty = cv::Mat::zeros(height-1, width, CV_32FC1);
-	float ratio = (float)(sigma_s / sigma_r);
+	float ratio = (sigma_s / sigma_r);
 
-	float a = (float)exp(-sqrt(2.0) / sigma_s);
-	for(int y=0; y<height; y++)
+	if(guide.depth()==CV_8U)
 	{
-		for(int x=0; x<width-1; x++)
-		{
-			float accum = 0.0f;
-			for(int c=0; c<dim; c++)
-			{
-				accum += abs(img.at<float>(y, (x+1)*dim+c) - img.at<float>(y, x*dim+c)); 
-			}
-#ifdef USE_FAST_POW
-			dctx.at<float>(y, x) = fastPow(a, 1.0f + ratio * accum); 
-#else
-			dctx.at<float>(y, x) = cv::pow(a, 1.0f + ratio * accum); 
-#endif
-		}
+		if(norm == DTF_L1) buid_dxdyL1_8u(guide, dctx,dcty,ratio);
+		else if(norm == DTF_L2) buid_dxdyL2_8u(guide, dctx,dcty,ratio);
 	}
-
-	for(int y=0; y<height-1; y++)
+	else
 	{
-		for(int x=0; x<width; x++)  
-		{
-			float accum = 0.0f;
-			for(int c=0; c<dim; c++)
-			{
-				accum += abs(img.at<float>(y+1, x*dim+c) - img.at<float>(y, x*dim+c)); 
-			}
-#ifdef USE_FAST_POW
-			dcty.at<float>(y, x) = fastPow(a, 1.0f + ratio * accum); 
-#else
-			dcty.at<float>(y, x) = cv::pow(a, 1.0f + ratio * accum); 
-#endif
-		}
+		Mat guidef;
+		guide.convertTo(guidef, CV_32F);
+		if(norm == DTF_L1) buid_dxdyL1_32f(guidef, dctx,dcty,ratio);
+		else if(norm == DTF_L2) buid_dxdyL2_32f(guidef, dctx,dcty,ratio);
 	}
 
 	// Apply recursive folter maxiter times
-	img.convertTo(out, CV_MAKETYPE(CV_32F, dim));
-	while(maxiter--)
+	int i=maxiter;
+	Mat amat,amat2;
+	while(i--)
 	{
-		recursiveFilterHorizontalB(out, dctx);
-		recursiveFilterVerticalB(out, dcty);
+		float sigma_h = (float) (sigma_s * sqrt(3.0) * pow(2.0,(maxiter - (i+1))) / sqrt(pow(4.0,maxiter) -1));
+		float a = (float)exp(-sqrt(2.0) / sigma_h);
+
+		// and a = exp(-sqrt(2) / sigma_H) to the power of "dct"
+		//powMat(a,dctx, amat);
+		pow_fmath(a,dctx, amat);
+		recursiveFilterHorizontalBGR(img, amat);
+
+		//powMat(a,dcty, amat2);
+		pow_fmath(a,dcty, amat2);
+		recursiveFilterVerticalBGR(img, amat2);
 	}
-	out.convertTo(dest,src.type());
+	//out.convertTo(dest,src.type(),1.0,0.5);
+	img.convertTo(dest,src.type(), 1.0, 0.5);
+}
+
+// Domain transform filtering: baseline implimentation for optimization
+void domainTransformFilter_RF_Base(const Mat& src, Mat& dest, float sigma_r, float sigma_s, int maxiter, int norm)
+{
+	domainTransformFilter_RF_Base(src,src,dest,sigma_r,sigma_s,maxiter, norm);
+}
+
+void domainTransformFilterRF(const Mat& src, const Mat& guide, Mat& dst, float sigma_r, float sigma_s, int maxiter, int norm, int implementation)
+{   
+	//setNumThreads(4);
+
+	if(implementation==DTF_SLOWEST)
+	{
+		domainTransformFilter_RF_Base(src, guide, dst, sigma_r,sigma_s,maxiter, norm);
+	}
+	else if(implementation==DTF_BGRA_SSE)
+	{
+		domainTransformFilter_RF_BGRA_SSE_SINGLE(src, guide, dst, sigma_r,sigma_s,maxiter, norm);
+	}
+	else if(implementation==DTF_BGRA_SSE_PARALLEL)
+	{
+		domainTransformFilter_RF_BGRA_SSE_PARALLEL(src, guide, dst, sigma_r,sigma_s,maxiter, norm);
+	}
+}
+
+void domainTransformFilterRF(const Mat& src, Mat& dst, float sigma_r, float sigma_s, int maxiter, int norm, int implementation)
+{
+	domainTransformFilterRF(src,src,dst,sigma_r,sigma_s,maxiter,norm,implementation);
+}
+
+void interpolatedConvolutionX_32f(const Mat& src_,Mat& dest,const float radius, const Mat& ctx_)
+{
+	if(dest.empty()) dest.create(src_.size(),src_.type());
+
+	Mat src;
+	copyMakeBorder(src_, src,0,0,1,1,BORDER_REPLICATE);
+	Mat ctx;
+	copyMakeBorder(ctx_, ctx,0,0,1,1,BORDER_CONSTANT,Scalar::all(1));
+
+	if(src.channels()==1)
+	{
+		for(int j=0; j<src.rows; j++)
+		{
+			const float* s = src.ptr<float>(j)+1;
+			const float* dx = ctx.ptr<float>(j)+1;
+			float* d = dest.ptr<float>(j);
+			
+			int kk=0;
+
+			int left=kk;
+			int right=kk;
+
+			float sum=s[0];
+			int sumN=1;
+
+			int i;
+			for(kk=0;kk<src.cols; kk++)
+			{
+				float L=0.f,R=0.f;
+				float Lr=0.f,Rr=0.f;
+
+				int TMPright=right;
+				for(i=TMPright+1;i<src.cols; i++)
+				{
+					float dis = dx[i]-dx[kk];
+					if(abs(dis)<=radius)
+					{
+						sum += s[i];
+						sumN++;
+						right++;
+					}
+					else
+					{
+						break;
+					}    
+				}
+				//right fractional area
+				float a = (dx[kk]+radius -dx[i-1]) /(dx[i]-dx[i-1]);
+				float yi = s[i-1] + a*(s[i]-s[i-1]);
+				R = 0.5f*(yi+s[i-1])*a*(dx[i]-dx[i-1]);
+				Rr = dx[i-1];
+				//std::cout<<a<<","<<(dx[i]-dx[i-1])<<","<<yi<<","<<R<<std::endl;
+
+				int TMPleft=left;
+				for(i=TMPleft;i<kk;i++)
+				{
+					float dis = dx[i]-dx[kk];
+					if(fabs(dis)>radius)
+					{
+						sum -= s[i];
+						sumN--;
+						left++;
+					}
+					else
+					{
+						break;
+					}    
+				}
+				//left fractional area
+				a = (dx[kk]-radius -dx[i-1]) /(dx[i]-dx[i-1]);
+				yi = s[i-1] + a*(s[i]-s[i-1]);
+				L= 0.5f*(yi+s[i])*(1.f-a)*(dx[i]-dx[i-1]);
+				Lr=dx[i];
+				
+				d[kk] = ((sum/(float)sumN)*(Rr-Lr) + L+R)/(float)(2.f*radius);
+			}
+		}
+	}
+	else if(src.channels()==3)
+	{
+		for(int j=0;j<src.rows;j++)
+		{
+			const float* s = src.ptr<float>(j)+3;
+			const float* dx = ctx.ptr<float>(j)+1;
+			float* d = dest.ptr<float>(j);
+			
+			int kk=0;
+
+			int left=kk;
+			int right=kk;
+
+			Vec3f bgr = Vec3f (s[0],s[1],s[2]);
+			int sumN=1;
+
+			int i;
+			for(kk=0;kk<src_.cols;kk++)
+			{
+				Vec3f L = Vec3f(0.f,0.f,0.f);
+				Vec3f R = Vec3f(0.f,0.f,0.f);
+				float Lr=0.f,Rr=0.f;
+
+				int TMPright=right;
+				for(i=TMPright+1;i<src_.cols;i++)
+				{
+					float dis = dx[i]-dx[kk];
+					if(abs(dis)<=radius)
+					{
+						bgr.val[0] += s[3*i+0];
+						bgr.val[1] += s[3*i+1];
+						bgr.val[2] += s[3*i+2];
+						sumN++;
+						right++;
+					}else
+					{
+						break;
+					}    
+				}
+				//right fractional area
+				float a = (dx[kk]+radius -dx[i-1]) /(dx[i]-dx[i-1]);
+				Vec3f yi = Vec3f(
+						s[3*(i-1)+0] + a*(s[3*i+0]-s[3*(i-1)+0]),
+						s[3*(i-1)+1] + a*(s[3*i+1]-s[3*(i-1)+1]),
+						s[3*(i-1)+2] + a*(s[3*i+2]-s[3*(i-1)+2])
+						);
+
+				R = Vec3f(
+						0.5f*(yi.val[0]+s[3*(i-1)+0])*a*(dx[i]-dx[i-1]),
+						0.5f*(yi.val[1]+s[3*(i-1)+1])*a*(dx[i]-dx[i-1]),
+						0.5f*(yi.val[2]+s[3*(i-1)+2])*a*(dx[i]-dx[i-1])
+						);
+				Rr = dx[i-1];
+
+
+				int TMPleft=left;
+				for(i=TMPleft;i<kk;i++)
+				{
+					//int Dsum=sum;
+					float dis = dx[i]-dx[kk];
+					if(fabs(dis)>radius)
+					{
+						bgr.val[0] -= s[3*i+0];
+						bgr.val[1] -= s[3*i+1];
+						bgr.val[2] -= s[3*i+2];
+						sumN--;
+						left++;
+					}else
+					{
+						break;
+					}    
+				}
+				//left fractional area
+				a = (dx[kk]-radius -dx[i-1]) /(dx[i]-dx[i-1]);
+				yi = Vec3f(
+						s[3*(i-1)+0] + a*(s[3*i+0]-s[3*(i-1)+0]),
+						s[3*(i-1)+1] + a*(s[3*i+1]-s[3*(i-1)+1]),
+						s[3*(i-1)+2] + a*(s[3*i+2]-s[3*(i-1)+2])
+						);
+
+				L = Vec3f(
+						0.5f*(yi.val[0]+s[3*(i)+0])*(1.0-a)*(dx[i]-dx[i-1]),
+						0.5f*(yi.val[1]+s[3*(i)+1])*(1.0-a)*(dx[i]-dx[i-1]),
+						0.5f*(yi.val[2]+s[3*(i)+2])*(1.0-a)*(dx[i]-dx[i-1])
+						);
+				Lr = dx[i];
+
+
+				Vec3f v= ((bgr/(float)sumN)*(Rr-Lr) + L+R)/(2.f*radius);
+				d[3*kk+0] = v.val[0];
+				d[3*kk+1] = v.val[1];
+				d[3*kk+2] = v.val[2];
+			}
+		}
+	}
+}
+
+void normalizedConvolutionX_32f(const Mat& src,Mat& dest,const float radius, const Mat& ctx)
+{
+	if(dest.empty()) dest.create(src.size(),src.type());
+
+	if(src.channels()==1)
+	{
+		for(int j=0; j<src.rows; j++)
+		{
+			const float* s = src.ptr<float>(j);
+			const float* dx = ctx.ptr<float>(j);
+			float* d = dest.ptr<float>(j);
+			
+			int kk=0;
+
+			int left=kk;
+			int right=kk;
+
+			float sum=s[0];
+			int sumN=1;
+
+			int i;
+			for(kk=0;kk<src.cols; kk++)
+			{
+				int TMPright=right;
+				for(i=TMPright+1;i<src.cols; i++)
+				{
+					float dis = dx[i]-dx[kk];
+					if(abs(dis)<=radius)
+					{
+						sum += s[i];
+						sumN++;
+						right++;
+					}else
+					{
+						break;
+					}    
+				}
+				int TMPleft=left;
+				for(i=TMPleft;i<kk;i++)
+				{
+//					int Dsum=sum;
+					float dis = dx[i]-dx[kk];
+					if(fabs(dis)>radius)
+					{
+						sum -= s[i];
+						sumN--;
+						left++;
+					}else{
+						break;
+					}    
+				}
+				d[kk] = sum/(float)sumN;
+			}
+		}
+	}
+	else if(src.channels()==3)
+	{
+		for(int j=0;j<src.rows;j++)
+		{
+			const float* s = src.ptr<float>(j);
+			const float* dx = ctx.ptr<float>(j);
+			float* d = dest.ptr<float>(j);
+			
+			int kk=0;
+
+			int left=kk;
+			int right=kk;
+
+			float CV_DECL_ALIGNED(16) bgr[3];
+			bgr[0]=s[0];
+			bgr[1]=s[1];
+			bgr[2]=s[2];
+			int sumN=1;
+
+			int i;
+			for(kk=0;kk<src.cols;kk++)
+			{
+				int TMPright=right;
+				for(i=TMPright+1;i<src.cols;i++)
+				{
+					float dis = dx[i]-dx[kk];
+					if(abs(dis)<=radius)
+					{
+						bgr[0] += s[3*i+0];
+						bgr[1] += s[3*i+1];
+						bgr[2] += s[3*i+2];
+						sumN++;
+						right++;
+					}else
+					{
+						break;
+					}    
+				}
+				int TMPleft=left;
+				for(i=TMPleft;i<kk;i++)
+				{
+					//int Dsum=sum;
+					float dis = dx[i]-dx[kk];
+					if(fabs(dis)>radius)
+					{
+						bgr[0] -= s[3*i+0];
+						bgr[1] -= s[3*i+1];
+						bgr[2] -= s[3*i+2];
+						sumN--;
+						left++;
+					}else
+					{
+						break;
+					}    
+				}
+				float div = 1.f/(float)sumN;
+				d[3*kk+0] = bgr[0]*div;
+				d[3*kk+1] = bgr[1]*div;
+				d[3*kk+2] = bgr[2]*div;
+			}
+		}
+	}
+}
+
+void normalizedConvolutionX_RGBA_32f_SSE(const Mat& src,Mat& dest,const float radius, const Mat& ctx)
+{
+	if(dest.empty()) dest.create(src.size(),src.type());
+
+	bool sse = true;
+	if(sse)
+		for(int j=0;j<src.rows;j++)
+		{
+			const float* s = src.ptr<float>(j);
+			const float* dx = ctx.ptr<float>(j);
+			float* d = dest.ptr<float>(j);
+
+			int kk=0;
+
+			int left=kk;
+			int right=kk;
+
+			__m128 mbgr = _mm_loadu_ps(s);
+			int sumN=1;
+
+			int i;
+			for(kk=0;kk<src.cols;kk++)
+			{
+				int TMPright=right;
+				for(i=TMPright+1;i<src.cols;i++)
+				{
+					float dis = dx[i]-dx[kk];
+					if(abs(dis)<=radius)
+					{
+						mbgr = _mm_add_ps(mbgr,_mm_loadu_ps(s+4*i));
+						sumN++;
+						right++;
+					}else
+					{
+						break;
+					}    
+				}
+				int TMPleft=left;
+				for(i=TMPleft;i<kk;i++)
+				{
+					float dis = dx[i]-dx[kk];
+					if(fabs(dis)>radius)
+					{
+						mbgr = _mm_sub_ps(mbgr,_mm_loadu_ps(s+4*i));
+						sumN--;
+						left++;
+					}else
+					{
+						break;
+					}    
+				}
+				__m128 mdiv = _mm_set1_ps((1.f/(float)sumN));
+				_mm_storeu_ps(d+4*kk,_mm_mul_ps(mbgr,mdiv));
+			}
+		}
+	else
+	{
+		for(int j=0;j<src.rows;j++)
+		{
+			const float* s = src.ptr<float>(j);
+			const float* dx = ctx.ptr<float>(j);
+			float* d = dest.ptr<float>(j);
+
+			int kk=0;
+
+			int left=kk;
+			int right=kk;
+
+			float CV_DECL_ALIGNED(16) bgr[4];
+			bgr[0]=s[0];
+			bgr[1]=s[1];
+			bgr[2]=s[2];
+			int sumN=1;
+
+			int i;
+			for(kk=0;kk<src.cols;kk++)
+			{
+				int TMPright=right;
+				for(i=TMPright+1;i<src.cols;i++)
+				{
+					float dis = dx[i]-dx[kk];
+					if(abs(dis)<=radius)
+					{
+						bgr[0] += s[4*i+0];
+						bgr[1] += s[4*i+1];
+						bgr[2] += s[4*i+2];
+						sumN++;
+						right++;
+					}else
+					{
+						break;
+					}    
+				}
+				int TMPleft=left;
+				for(i=TMPleft;i<kk;i++)
+				{
+					//int Dsum=sum;
+					float dis = dx[i]-dx[kk];
+					if(fabs(dis)>radius)
+					{
+						bgr[0] -= s[4*i+0];
+						bgr[1] -= s[4*i+1];
+						bgr[2] -= s[4*i+2];
+						sumN--;
+						left++;
+					}else
+					{
+						break;
+					}    
+				}
+				float div = 1.f/(float)sumN;
+				d[4*kk+0] = bgr[0]*div;
+				d[4*kk+1] = bgr[1]*div;
+				d[4*kk+2] = bgr[2]*div;
+			}
+		}
+	}
+}
+
+
+void normalizedConvolutionY_RGBA_32f_SSE(const Mat& src,Mat& dest,const float radius,Mat& cty)
+{
+	if(dest.empty()) dest.create(src.size(),src.type());
+
+	bool sse = true;
+
+	int vstepcty = cty.cols; 
+	int vstep = src.cols*4;
+	if(sse)
+	{
+		for(int j=0;j<src.cols;j++)
+		{
+			int kk=0;
+
+			int left=kk;
+			int right=kk;
+
+			float* s = (float*)src.ptr<float>(0);s+=4*j;
+			__m128 mbgr = _mm_loadu_ps(s);
+
+			int sumN=1;
+
+			int i;
+			for(kk=0;kk<src.rows;kk++)
+			{
+				int TMPright=right;
+				const float ctyk = cty.at<float>(kk, j);
+				float* pcty = cty.ptr<float>(TMPright+1); pcty+=j;
+				for(i=TMPright+1;i<src.rows;i++)
+				{
+					float dis = *(pcty) - ctyk;
+					if(abs(dis)<=radius)
+					{
+						mbgr = _mm_add_ps(mbgr, _mm_loadu_ps(s+vstep*i));
+						
+						sumN++;
+						right++;
+					}else
+					{
+						break;
+					}   
+					pcty+=vstepcty;
+				}
+				int TMPleft=left;
+				pcty = cty.ptr<float>(TMPleft); pcty+=j;
+				for(i=TMPleft;i<kk;i++)
+				{
+					//int Dsum=sum;
+					float dis = *(pcty) - ctyk;
+					if(fabs(dis)>radius)
+					{
+						mbgr = _mm_sub_ps(mbgr, _mm_loadu_ps(s+vstep*i));
+						sumN--;
+						left++;
+					}else
+					{
+						break;
+					}  
+					pcty+=vstepcty;
+				}
+				float* d = dest.ptr<float>(kk);
+				__m128 mdiv = _mm_set1_ps((1.f/(float)sumN));
+				_mm_storeu_ps(d+4*j,_mm_mul_ps(mbgr,mdiv));
+			}
+		}
+	}
+	else
+	{
+		for(int j=0;j<src.cols;j++)
+		{
+			int kk=0;
+
+			int left=kk;
+			int right=kk;
+
+			float b=src.at<float>(0,4*j+0);
+			float g=src.at<float>(0,4*j+1);
+			float r=src.at<float>(0,4*j+2);
+			int sumN=1;
+
+			int i;
+			for(kk=0;kk<src.rows;kk++)
+			{
+				int TMPright=right;
+				for(i=TMPright+1;i<src.rows;i++)
+				{
+					float dis = cty.at<float>(i, j) - cty.at<float>(kk, j);
+					if(abs(dis)<=radius)
+					{
+						b += src.at<float>(i,4*j+0);
+						g += src.at<float>(i,4*j+1);
+						r += src.at<float>(i,4*j+2);
+						sumN++;
+						right++;
+					}else
+					{
+						break;
+					}    
+				}
+				int TMPleft=left;
+				for(i=TMPleft;i<kk;i++)
+				{
+					//int Dsum=sum;
+					float dis = cty.at<float>(i, j) - cty.at<float>(kk, j);
+					if(fabs(dis)>radius)
+					{
+						b -= src.at<float>(i,4*j+0);
+						g -= src.at<float>(i,4*j+1);
+						r -= src.at<float>(i,4*j+2);
+						sumN--;
+						left++;
+					}else
+					{
+						break;
+					}    
+				}
+				dest.at<float>(kk,4*j+0) = b/(float)sumN;
+				dest.at<float>(kk,4*j+1) = g/(float)sumN;
+				dest.at<float>(kk,4*j+2) = r/(float)sumN;
+			}
+		}
+	}
+}
+
+void normalizedConvolutionY_32f(const Mat& src,Mat& dest,const float radius,Mat& cty)
+{
+	if(dest.empty()) dest.create(src.size(),src.type());
+
+	if(src.channels()==1)
+	{
+		;
+	}
+	else if(src.channels()==3)
+	{
+		for(int j=0;j<src.cols;j++)
+		{
+			int kk=0;
+
+			int left=kk;
+			int right=kk;
+			
+			float b=src.at<float>(0,3*j+0);
+			float g=src.at<float>(0,3*j+1);
+			float r=src.at<float>(0,3*j+2);
+			int sumN=1;
+
+			int i;
+			for(kk=0;kk<src.rows;kk++)
+			{
+				int TMPright=right;
+				for(i=TMPright+1;i<src.rows;i++)
+				{
+					float dis = cty.at<float>(i, j) - cty.at<float>(kk, j);
+					if(abs(dis)<=radius)
+					{
+						b += src.at<float>(i,3*j+0);
+						g += src.at<float>(i,3*j+1);
+						r += src.at<float>(i,3*j+2);
+						sumN++;
+						right++;
+					}else
+					{
+						break;
+					}    
+				}
+				int TMPleft=left;
+				for(i=TMPleft;i<kk;i++)
+				{
+					//int Dsum=sum;
+					float dis = cty.at<float>(i, j) - cty.at<float>(kk, j);
+					if(fabs(dis)>radius)
+					{
+						b -= src.at<float>(i,3*j+0);
+						g -= src.at<float>(i,3*j+1);
+						r -= src.at<float>(i,3*j+2);
+						sumN--;
+						left++;
+					}else
+					{
+						break;
+					}    
+				}
+				dest.at<float>(kk,3*j+0) = b/(float)sumN;
+				dest.at<float>(kk,3*j+1) = g/(float)sumN;
+				dest.at<float>(kk,3*j+2) = r/(float)sumN;
+			}
+		}
+	}
+}
+
+
+// Domain transform filtering: baseline implimentation for optimization
+void domainTransformFilter_NC_Base(const Mat& src, const Mat& guide, Mat& dest, float sigma_r, float sigma_s, int maxiter, int norm)
+{
+	Mat img;
+	src.convertTo(img, CV_32F);
+
+	int width = src.cols;
+	int height = src.rows;
+
+	// compute derivatives of transformed domain "dct"
+	cv::Mat dctx = cv::Mat::zeros(height, width, CV_32FC1);
+	cv::Mat dcty = cv::Mat::zeros(height, width, CV_32FC1);
+	cv::Mat ch_v,ch_h;
+	float ratio = (sigma_s / sigma_r);
+
+	if(guide.depth()==CV_8U)
+	{
+		if(norm == DTF_L1) buid_ct_L1_8u(guide, dctx,dcty,ratio);
+		//if(norm == DTF_L1) buid_ct_L_8u(guide, dctx,dcty,ratio,5);
+		else if(norm == DTF_L2) buid_ct_L2_8u(guide, dctx,dcty,ratio);
+		else buid_ct_L1_8u(guide, dctx,dcty,ratio);
+
+		//cunsum_32f(dctx);
+		ch_h=dctx;
+		//ch_v=dcty;
+		transpose(dcty,ch_v);
+		//cunsum_32f(ch_v);
+	}
+	else
+	{
+		Mat guidef;
+		guide.convertTo(guidef, CV_32F);
+		if(norm == DTF_L1) buid_ct_L2_32f(guidef, dctx,dcty,ratio);
+		else if(norm == DTF_L2) buid_ct_L2_32f(guidef, dctx,dcty,ratio);
+		else buid_ct_L2_32f(guidef, dctx,dcty,ratio);
+
+		//cunsum_32f(dctx);
+		ch_h=dctx;
+		transpose(dcty,ch_v);
+		//cunsum_32f(ch_v);
+	}
+
+	// Apply recursive folter maxiter times
+	int i=maxiter;
+
+	Mat out;
+	Mat imgt;
+	Mat outt;
+	while(i--)
+	{	
+		float sigma_h = (float) (sigma_s * sqrt(3.0) * pow(2.0,(maxiter - (i+1))) / sqrt(pow(4.0,maxiter) -1));
+		const float radius = sigma_h*sqrt(3.f);
+
+		normalizedConvolutionX_32f(img,out, radius, ch_h);
+		transpose(out,imgt);
+		normalizedConvolutionX_32f(imgt,outt, radius, ch_v);
+		//RunNC_Y_32F(out,img, radius, ch_v);
+		transpose(outt,img);
+	}
+
+	img.convertTo(dest,src.type(), 1.0, 0.5);
+}
+
+// Domain transform filtering: baseline implimentation for optimization
+void domainTransformFilter_NC_BGRA_SSE_SINGLE(const Mat& src, const Mat& guide, Mat& dest, float sigma_r, float sigma_s, int maxiter, int norm)
+{
+	printf("sse\n");
+	Mat img;
+	cvtColorBGR8u2BGRA32f(src,img);
+
+	int width = src.cols;
+	int height = src.rows;
+
+	// compute derivatives of transformed domain "dct"
+	cv::Mat dctx = cv::Mat::zeros(height, width, CV_32FC1);
+	cv::Mat dcty = cv::Mat::zeros(height, width, CV_32FC1);
+	cv::Mat ch_v,ch_h;
+	float ratio = (sigma_s / sigma_r);
+
+	if(guide.depth()==CV_8U)
+	{
+		if(norm == DTF_L1) buid_ct_L1_8u(guide, dctx,dcty,ratio);
+		//if(norm == DTF_L1) buid_ct_L_8u(guide, dctx,dcty,ratio,5);
+		else if(norm == DTF_L2) buid_ct_L2_8u(guide, dctx,dcty,ratio);
+		else buid_ct_L1_8u(guide, dctx,dcty,ratio);
+
+		//cunsum_32f(dctx);
+		ch_h=dctx;
+		ch_v=dcty;
+		//transpose(dcty,ch_v);
+		//cunsum_32f(ch_v);
+	}
+	else
+	{
+		Mat guidef;
+		guide.convertTo(guidef, CV_32F);
+		if(norm == DTF_L1) buid_ct_L2_32f(guidef, dctx,dcty,ratio);
+		else if(norm == DTF_L2) buid_ct_L2_32f(guidef, dctx,dcty,ratio);
+		else buid_ct_L2_32f(guidef, dctx,dcty,ratio);
+
+		//cunsum_32f(dctx);
+		ch_h=dctx;
+		ch_v=dcty;
+		//transpose(dcty,ch_v);
+		//cunsum_32f(ch_v);
+	}
+
+	// Apply recursive folter maxiter times
+	int i=maxiter;
+
+	Mat out;
+	Mat imgt;
+	Mat outt;
+	while(i--)
+	{	
+		float sigma_h = (float) (sigma_s * sqrt(3.0) * pow(2.0,(maxiter - (i+1))) / sqrt(pow(4.0,maxiter) -1));
+		const float radius = sigma_h*sqrt(3.f);
+
+		normalizedConvolutionX_RGBA_32f_SSE(img,out, radius, ch_h);
+		normalizedConvolutionY_RGBA_32f_SSE(out,img, radius, ch_v);
+		
+		/*
+		normalizedConvolutionX_RGBA_32f_SSE(img,out, radius, ch_h);
+		transpose(out,imgt);
+		normalizedConvolutionX_RGBA_32f_SSE(imgt,outt, radius, ch_v);
+		transpose(outt,img);
+		*/
+	}
+
+	cvtColorBGRA32f2BGR8u(img,dest);
+	//img.convertTo(dest,src.type(), 1.0, 0.5);
+}
+
+void domainTransformFilter_NC_Base(const Mat& src, Mat& dst, float sigma_r, float sigma_s, int maxiter, int norm)
+{
+	domainTransformFilter_NC_Base(src,src,dst,sigma_r,sigma_s,maxiter,norm);
+}
+
+void domainTransformFilterNC(const Mat& src, const Mat& guide, Mat& dst, float sigma_r, float sigma_s, int maxiter, int norm, int implementation)
+{   
+	if(implementation==DTF_SLOWEST)
+	{
+		domainTransformFilter_NC_Base(src, guide, dst, sigma_r,sigma_s,maxiter, norm);
+	}
+	else if(implementation==DTF_BGRA_SSE)
+	{
+		domainTransformFilter_NC_BGRA_SSE_SINGLE(src, guide, dst, sigma_r,sigma_s,maxiter, norm);
+	}
+	else if(implementation==DTF_BGRA_SSE_PARALLEL)
+	{
+		std::cout<<"no inplimentation"<<std::endl;
+		src.copyTo(dst);
+	}
+}
+
+void domainTransformFilterNC(const Mat& src, Mat& dst, float sigma_r, float sigma_s, int maxiter, int norm, int implementation)
+{
+	domainTransformFilterNC(src,src,dst,sigma_r,sigma_s,maxiter,norm,implementation);
+}
+
+
+// Domain transform filtering: baseline implimentation for optimization
+void domainTransformFilter_IC_Base(const Mat& src, const Mat& guide, Mat& dest, float sigma_r, float sigma_s, int maxiter, int norm)
+{
+	Mat img;
+	src.convertTo(img, CV_32F);
+
+	int width = src.cols;
+	int height = src.rows;
+
+	// compute derivatives of transformed domain "dct"
+	cv::Mat dctx = cv::Mat::zeros(height, width, CV_32FC1);
+	cv::Mat dcty = cv::Mat::zeros(height, width, CV_32FC1);
+	cv::Mat ch_v,ch_h;
+	float ratio = (sigma_s / sigma_r);
+
+	if(guide.depth()==CV_8U)
+	{
+		if(norm == DTF_L1) buid_ct_L1_8u(guide, dctx,dcty,ratio);
+		else if(norm == DTF_L2) buid_ct_L2_8u(guide, dctx,dcty,ratio);
+		else buid_ct_L1_8u(guide, dctx,dcty,ratio);
+
+		//cunsum_32f(dctx);
+		ch_h=dctx;
+		//ch_v=dcty;
+		transpose(dcty,ch_v);
+		//cunsum_32f(ch_v);
+	}
+	else
+	{
+		Mat guidef;
+		guide.convertTo(guidef, CV_32F);
+		if(norm == DTF_L1) buid_ct_L2_32f(guidef, dctx,dcty,ratio);
+		else if(norm == DTF_L2) buid_ct_L2_32f(guidef, dctx,dcty,ratio);
+		else buid_ct_L2_32f(guidef, dctx,dcty,ratio);
+
+		//cunsum_32f(dctx);
+		ch_h=dctx;
+		transpose(dcty,ch_v);
+		//cunsum_32f(ch_v);
+	}
+
+	// Apply recursive folter maxiter times
+	int i=maxiter;
+
+	Mat out;
+	Mat imgt;
+	Mat outt;
+	while(i--)
+	{	
+		float sigma_h = (float) (sigma_s * sqrt(3.0) * pow(2.0,(maxiter - (i+1))) / sqrt(pow(4.0,maxiter) -1));
+		const float radius = sigma_h*sqrt(3.f);
+
+		interpolatedConvolutionX_32f(img,out, radius, ch_h);
+		transpose(out,imgt);
+		interpolatedConvolutionX_32f(imgt,outt, radius, ch_v);
+		//RunNC_Y_32F(out,img, radius, ch_v);
+		transpose(outt,img);
+	}
+
+	img.convertTo(dest,src.type(), 1.0, 0.5);
+}
+
+void domainTransformFilterIC(const Mat& src, const Mat& guide, Mat& dst, float sigma_r, float sigma_s, int maxiter, int norm, int implementation)
+{   
+	if(implementation==DTF_SLOWEST)
+	{
+		domainTransformFilter_IC_Base(src, guide, dst, sigma_r,sigma_s,maxiter, norm);
+	}
+	else if(implementation==DTF_BGRA_SSE)
+	{
+		std::cout<<"no inplimentation"<<std::endl;
+		src.copyTo(dst);
+	}
+	else if(implementation==DTF_BGRA_SSE_PARALLEL)
+	{
+		std::cout<<"no inplimentation"<<std::endl;
+		src.copyTo(dst);
+	}
+}
+
+void domainTransformFilterIC(const Mat& src, Mat& dst, float sigma_r, float sigma_s, int maxiter, int norm, int implementation)
+{
+	domainTransformFilterIC(src,src,dst,sigma_r,sigma_s,maxiter,norm,implementation);
 }
