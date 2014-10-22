@@ -15,36 +15,61 @@ using namespace std;
 	int sc = 50;
 	int ss = 100;
 	int iteration = 3;
+
+	
 	createTrackbar("sigma_color",wname,&sc,255);
 	createTrackbar("sigma_space",wname,&ss,255);
 	createTrackbar("iteration",wname,&iteration,10);
 
 	int norm = 0;
 	createTrackbar("normL1/L2",wname,&norm,1);
-	int implimentation=2;
+	int implimentation=0;
 	createTrackbar("impliment",wname,&implimentation,2);
 
-	int sw=2;
+	int sw=0;
 	createTrackbar("RF/NC/IC",wname,&sw,2);
+
+	int color = 0;
+	createTrackbar("color",wname,&color,1);
+
 	int key = 0;
 
-	Mat show;
+	
+//	Mat c;cvtColor(src,c,CV_GRAY2BGR);
 	while(key!='q' && key!=VK_ESCAPE)
 	{
+		Mat show;
+		Mat input;
+		
+		if(color==0) cvtColor(src,input,COLOR_BGR2GRAY);
+		else input = src;
+		
 		int64 startTime = getTickCount();
-		//domainTransformFilterRF(src, show,ss,sc,iteration);
 		if(sw==0)
 		{
-			domainTransformFilter(src, show,ss,sc,iteration,norm+1,DTF_RF,implimentation);
+			domainTransformFilter(input, show,ss,sc,iteration,norm+1,DTF_RF,implimentation);
 		}
 		else if(sw == 1)
 		{
-			domainTransformFilter(src, show,ss,sc,iteration,norm+1,DTF_NC,implimentation);
+			domainTransformFilter(input, show,ss,sc,iteration,norm+1,DTF_NC,implimentation);
 		}
-		else
+		else if(sw == 2)
 		{
-			domainTransformFilter(src, show,ss,sc,iteration,norm+1,DTF_IC,implimentation);
+			domainTransformFilter(input, show,ss,sc,iteration,norm+1,DTF_IC,implimentation);
 		}
+		/*
+		else if(sw==3)
+		{
+			domainTransformFilter(input, src, show,ss,sc,iteration,norm+1,DTF_RF,implimentation);
+		}
+		else if(sw == 4)
+		{
+			domainTransformFilter(input, src, show,ss,sc,iteration,norm+1,DTF_NC,implimentation);
+		}
+		else  if(sw == 5)
+		{
+			domainTransformFilter(input, src, show,ss,sc,iteration,norm+1,DTF_IC,implimentation);
+		}*/
 		
 		double time = (getTickCount()-startTime)/(getTickFrequency());
 		printf("domain transform filter: %f ms\n",time*1000.0);
@@ -81,7 +106,6 @@ void detailEnhancement(Mat& src)
 
 		domainTransformFilter(src, smooth,ss,sc,iteration,DTF_L1,DTF_RF,DTF_BGRA_SSE_PARALLEL);
 		
-
 		subtract(src,smooth,sub,noArray(),CV_32F);
 		sub*=(boost*0.1);
 		add(src,1*sub,sub,noArray(),CV_32F);

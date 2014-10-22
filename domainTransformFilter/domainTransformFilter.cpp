@@ -958,8 +958,9 @@ inline float pow_fmath(float a, float b)
 	return fmath::exp(b*fmath::log(a));
 }
 
-void pow_fmath(const float a , const Mat& src, Mat & dest)
+void pow_fmath(const float a , InputArray srcImg, Mat & dest)
 {
+	Mat src = srcImg.getMat();
 	if(dest.empty())dest.create(src.size(),CV_32F);
 
 	int width = src.cols;
@@ -2514,10 +2515,12 @@ void domainTransformFilter_RF_BGRA_SSE_SINGLE(const Mat& src, const Mat& guide, 
 {
 	Mat img;
 	cvtColorBGR8u2BGRA32f(src,img);
+	
+	
 
 	int width = img.cols;
 	int height = img.rows;
-
+	
 	// compute derivatives of transformed domain "dct"
 	cv::Mat dctx = cv::Mat::zeros(height, width-1, CV_32FC1);
 	cv::Mat dcty = cv::Mat::zeros(height-1, width, CV_32FC1);
@@ -2526,7 +2529,7 @@ void domainTransformFilter_RF_BGRA_SSE_SINGLE(const Mat& src, const Mat& guide, 
 	if(guide.depth()==CV_8U)
 	{
 		if(norm == DTF_L1) buid_dxdyL1_8u(guide, dctx,dcty,ratio);
-		else if(norm == DTF_L2) buid_dxdyL2_8u(guide, dctx,dcty,ratio);
+		else if(norm == DTF_L2) buid_dxdyL2_8u(guide, dctx,dcty,ratio);	
 	}
 	else
 	{
@@ -2544,9 +2547,10 @@ void domainTransformFilter_RF_BGRA_SSE_SINGLE(const Mat& src, const Mat& guide, 
 		float sigma_h = (float) (sigma_s * sqrt(3.0) * pow(2.0,(maxiter - (i+1))) / sqrt(pow(4.0,maxiter) -1));
 		// and a = exp(-sqrt(2) / sigma_H) to the power of "dct"
 		float a = (float)exp(-sqrt(2.0) / sigma_h);
-
 		recursiveFilterPowHorizontalBGRA_SSE(img, dctx, a);
+		
 		recursiveFilterPowVerticalBGRA_SSE(img, dcty, a);
+		
 	}
 
 	cvtColorBGRA32f2BGR8u(img,dest);
@@ -2575,6 +2579,70 @@ void powMat(const float a , Mat& src, Mat & dest)
 /////////////////////////////////////////////////////////////////////////////////////////
 //for base implimentation of recursive implimentation
 // Recursive filter for vertical direction
+
+void recursiveFilterVerticalGraySSE(cv::Mat& out, cv::Mat& dct) 
+{
+	int width = out.cols;
+	int height = out.rows;
+	int dim = out.channels();
+	int x=0;
+	for(x=0; x<=width-4; x+=4)
+	{
+		const __m128 ones = _mm_set1_ps(1.f);
+		for(int y=1; y<height; y++)
+		{
+			float* pdct = dct.ptr<float>(y-1);
+
+			float* puout = out.ptr<float>(y-1);
+			float* pout = out.ptr<float>(y);
+
+			//float p = dct.at<float>(y-1, x);
+			__m128 mp = _mm_loadu_ps(pdct+x);
+			__m128 mo = _mm_loadu_ps(pout+x);
+			__m128 muo = _mm_loadu_ps(puout+x);
+
+			//_mm_mul_ps
+			_mm_storeu_ps(pout+x,_mm_add_ps(_mm_mul_ps (_mm_sub_ps(ones,mp), mo), _mm_mul_ps (mp, muo)));
+		}
+
+		for(int y=height-2; y>=0; y--)
+		{
+			float* pdct = dct.ptr<float>(y);
+
+			float* puout = out.ptr<float>(y+1);
+			float* pout = out.ptr<float>(y);
+
+			//float p = dct.at<float>(y-1, x);
+			__m128 mp = _mm_loadu_ps(pdct+x);
+			__m128 mo = _mm_loadu_ps(pout+x);
+			__m128 muo = _mm_loadu_ps(puout+x);
+
+			//_mm_mul_ps
+			_mm_storeu_ps(pout+x,_mm_add_ps(_mm_mul_ps (_mm_sub_ps(ones,mp), mo), _mm_mul_ps (mp, muo)));
+
+		}
+	}
+	for(; x<width; x++)
+	{
+		for(int y=1; y<height; y++)
+		{
+			float p = dct.at<float>(y-1, x);
+			for(int c=0; c<dim; c++)
+			{
+				out.at<float>(y, x*dim+c) = (1.f - p) * out.at<float>(y, x*dim+c) + p * out.at<float>(y-1, x*dim+c);
+			}
+		}
+
+		for(int y=height-2; y>=0; y--)
+		{
+			float p = dct.at<float>(y, x);
+			for(int c=0; c<dim; c++)
+			{
+				out.at<float>(y, x*dim+c) = p * out.at<float>(y+1, x*dim+c) + (1.f - p) * out.at<float>(y, x*dim+c);
+			}
+		}
+	}
+}
 void recursiveFilterVerticalBGR(cv::Mat& out, cv::Mat& dct) 
 {
 	int width = out.cols;
@@ -2602,7 +2670,7 @@ void recursiveFilterVerticalBGR(cv::Mat& out, cv::Mat& dct)
 		}
 	}
 }
-
+/*
 // Recursive filter for horizontal direction
 void recursiveFilterHorizontalBGR(cv::Mat& out, cv::Mat& dct) 
 {
@@ -2631,8 +2699,121 @@ void recursiveFilterHorizontalBGR(cv::Mat& out, cv::Mat& dct)
 		}
 	}
 }
+*/
+
+void recursiveFilterHorizontalGray(cv::Mat& out, cv::Mat& dct) 
+{
+	int width = out.cols;
+	int height = out.rows;
+	
+	for(int y=0; y<height; y++)
+	{
+		float* pdct = dct.ptr<float>(y); 
+		float* o = out.ptr<float>(y);o++;
+		for(int x=1; x<width; x++)
+		{
+			//float p = dct.at<float>(y, x-1);
+			float p = *pdct++;
+			//out.at<float>(y, x) = (1.f - p) * out.at<float>(y, x) + p * out.at<float>(y, (x-1));
+
+			*o = (1.f - p) * *o + p * *(o-1);
+			o++;
+		}
+
+		o-=2;
+		pdct--;
+		for(int x=width-2; x>=0; x--)
+		{
+			float p = *(pdct--);
+			*o = p * *(o+1) + (1.f-p) * *o;
+			o--;
+		}
+	}
+}
+
+void recursiveFilterHorizontalBGR(cv::Mat& out, cv::Mat& dct) 
+{
+	int width = out.cols;
+	int height = out.rows;
+	int dim = out.channels();
+
+	for(int y=0; y<height; y++)
+	{
+		for(int x=1; x<width; x++)
+		{
+			float p = dct.at<float>(y, x-1);
+			for(int c=0; c<dim; c++)
+			{
+				out.at<float>(y, x*dim+c) = (1.f - p) * out.at<float>(y, x*dim+c) + p * out.at<float>(y, (x-1)*dim+c);
+			}
+		}
+
+		for(int x=width-2; x>=0; x--)
+		{
+			float p = dct.at<float>(y, x);
+			for(int c=0; c<dim; c++)
+			{
+				out.at<float>(y, x*dim+c) = p * out.at<float>(y, (x+1)*dim+c) + (1.f - p) * out.at<float>(y, x*dim+c);
+			}
+		}
+	}
+}
+
+void domainTransformFilter_RF_GRAY_SSE_SINGLE(const Mat& src, const Mat& guide, Mat& dest, float sigma_r, float sigma_s, int maxiter, int norm)
+{
+		Mat img;
+	src.convertTo(img, CV_32F);
+
+	int width = src.cols;
+	int height = src.rows;
+
+	// compute derivatives of transformed domain "dct"
+	cv::Mat dctx = cv::Mat::zeros(height, width-1, CV_32FC1);
+	cv::Mat dcty = cv::Mat::zeros(height-1, width, CV_32FC1);
+	float ratio = (sigma_s / sigma_r);
+
+	if(guide.depth()==CV_8U)
+	{
+		if(norm == DTF_L1) buid_dxdyL1_8u(guide, dctx,dcty,ratio);
+		else if(norm == DTF_L2) buid_dxdyL2_8u(guide, dctx,dcty,ratio);
+	}
+	else
+	{
+		Mat guidef;
+		guide.convertTo(guidef, CV_32F);
+		if(norm == DTF_L1) buid_dxdyL1_32f(guidef, dctx,dcty,ratio);
+		else if(norm == DTF_L2) buid_dxdyL2_32f(guidef, dctx,dcty,ratio);
+	}
+
+	// Apply recursive folter maxiter times
+	int i=maxiter;
+	Mat amat,amat2;
+
+	Mat dctxt;transpose(dctx,dctxt);
+	Mat temp;
+	while(i--)
+	{
+		float sigma_h = (float) (sigma_s * sqrt(3.0) * pow(2.0,(maxiter - (i+1))) / sqrt(pow(4.0,maxiter) -1));
+		float a = (float)exp(-sqrt(2.0) / sigma_h);
+
+		// and a = exp(-sqrt(2) / sigma_H) to the power of "dct"
+		//powMat(a,dctx, amat);
+		pow_fmath(a,dctx, amat);
+		recursiveFilterHorizontalGray(img, amat);
+
+		/*transpose(img,temp);
+		pow_fmath(a,dctxt, amat);
+		recursiveFilterVerticalBGR(temp, amat);
+		transpose(temp,img);*/
 
 
+		//powMat(a,dcty, amat2);
+		pow_fmath(a,dcty, amat2);
+		recursiveFilterVerticalGraySSE(img, amat2);
+	}
+	//out.convertTo(dest,src.type(),1.0,0.5);
+	img.convertTo(dest,src.type(), 1.0, 0.5);
+}
 // Domain transform filtering: baseline implimentation for optimization
 void domainTransformFilter_RF_Base(const Mat& src, const Mat& guide, Mat& dest, float sigma_r, float sigma_s, int maxiter, int norm)
 {
@@ -2663,6 +2844,9 @@ void domainTransformFilter_RF_Base(const Mat& src, const Mat& guide, Mat& dest, 
 	// Apply recursive folter maxiter times
 	int i=maxiter;
 	Mat amat,amat2;
+
+	Mat dctxt;transpose(dctx,dctxt);
+	Mat temp;
 	while(i--)
 	{
 		float sigma_h = (float) (sigma_s * sqrt(3.0) * pow(2.0,(maxiter - (i+1))) / sqrt(pow(4.0,maxiter) -1));
@@ -2676,6 +2860,8 @@ void domainTransformFilter_RF_Base(const Mat& src, const Mat& guide, Mat& dest, 
 		//powMat(a,dcty, amat2);
 		pow_fmath(a,dcty, amat2);
 		recursiveFilterVerticalBGR(img, amat2);
+
+
 	}
 	//out.convertTo(dest,src.type(),1.0,0.5);
 	img.convertTo(dest,src.type(), 1.0, 0.5);
@@ -2697,11 +2883,13 @@ void domainTransformFilterRF(const Mat& src, const Mat& guide, Mat& dst, float s
 	}
 	else if(implementation==DTF_BGRA_SSE)
 	{
-		domainTransformFilter_RF_BGRA_SSE_SINGLE(src, guide, dst, sigma_r,sigma_s,maxiter, norm);
+		if(src.channels()==1) domainTransformFilter_RF_GRAY_SSE_SINGLE(src, guide, dst, sigma_r,sigma_s,maxiter, norm);
+		else	domainTransformFilter_RF_BGRA_SSE_SINGLE(src, guide, dst, sigma_r,sigma_s,maxiter, norm);
 	}
 	else if(implementation==DTF_BGRA_SSE_PARALLEL)
 	{
-		domainTransformFilter_RF_BGRA_SSE_PARALLEL(src, guide, dst, sigma_r,sigma_s,maxiter, norm);
+		if(src.channels()==1) domainTransformFilter_RF_GRAY_SSE_SINGLE(src, guide, dst, sigma_r,sigma_s,maxiter, norm);
+		else domainTransformFilter_RF_BGRA_SSE_PARALLEL(src, guide, dst, sigma_r,sigma_s,maxiter, norm);
 	}
 }
 
@@ -3461,7 +3649,8 @@ void domainTransformFilterNC(const Mat& src, const Mat& guide, Mat& dst, float s
 	}
 	else if(implementation==DTF_BGRA_SSE)
 	{
-		domainTransformFilter_NC_BGRA_SSE_SINGLE(src, guide, dst, sigma_r,sigma_s,maxiter, norm);
+		if(src.channels()==1)domainTransformFilter_NC_Base(src, guide, dst, sigma_r,sigma_s,maxiter, norm);
+		else domainTransformFilter_NC_BGRA_SSE_SINGLE(src, guide, dst, sigma_r,sigma_s,maxiter, norm);
 	}
 	else if(implementation==DTF_BGRA_SSE_PARALLEL)
 	{
