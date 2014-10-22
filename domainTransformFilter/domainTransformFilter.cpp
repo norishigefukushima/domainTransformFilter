@@ -1703,262 +1703,6 @@ s+=sstep;
 }
 */
 
-void buid_dxdyL1_8u(const Mat& src, Mat& dx, Mat& dy, const float ratio)
-{
-	const __m128i mask1 = _mm_setr_epi8(0,3,6,9,12,15,1,4,7,10,13,2,5,8,11,14);
-	const __m128i smask1 = _mm_setr_epi8(6,7,8,9,10,0,1,2,3,4,5,11,12,13,14,15);
-	const __m128i ssmask1 = _mm_setr_epi8(11,12,13,14,15,0,1,2,3,4,5,6,7,8,9,10);
-	const __m128i mask2 = _mm_setr_epi8(0,3,6,9,12,15, 2,5,8,11,14,1,4,7,10,13);
-	const __m128i ssmask2 = _mm_setr_epi8(0,1,2,3,4,11,12,13,14,15,5,6,7,8,9,10);
-	const __m128i bmask1 = _mm_setr_epi8
-		(0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00);
-	const __m128i bmask2 = _mm_setr_epi8
-		(0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0x00,0x00,0x00,0x00,0x00);
-	const __m128i bmask3 = _mm_setr_epi8
-		(0xFF,0xFF,0xFF,0xFF,0xFF,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00);
-	const __m128i bmask4 = _mm_setr_epi8
-		(0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0x00,0x00,0x00,0x00,0x00,0x00);	
-
-//	__m128i a,b,c;
-
-	int width = src.cols;
-	int height = src.rows;
-	int dim = src.channels();
-
-	Mat joint = src;
-	/*
-	for(int y=0; y<height-1; y++)
-	{
-	for(int x=0; x<width-1; x++)
-	{
-	int accumx = 0;
-	int accumy = 0;
-	for(int c=0; c<dim; c++)
-	{
-	accumx += abs(joint.at<uchar>(y, (x+1)*dim+c) - joint.at<uchar>(y, x*dim+c)); 
-	accumy += abs(joint.at<uchar>(y+1, x*dim+c) - joint.at<uchar>(y, x*dim+c)); 
-	}
-	dx.at<float>(y, x) = 1.0f + ratio * accumx; 
-	dy.at<float>(y, x) = 1.0f + ratio * accumy; 
-	}
-	int accumy = 0;
-	int x = width -1;
-	for(int c=0; c<dim; c++)
-	{
-	accumy += abs(joint.at<uchar>(y+1, x*dim+c) - joint.at<uchar>(y, x*dim+c)); 
-	}
-	dy.at<float>(y, x) = 1.0f + ratio * accumy; 
-	}
-	int y = height-1;
-	for(int x=0; x<width-1; x++)
-	{
-	int accumx = 0;
-	for(int c=0; c<dim; c++)
-	{
-	accumx += abs(joint.at<uchar>(y, (x+1)*dim+c) - joint.at<uchar>(y, x*dim+c)); 
-	}
-	dx.at<float>(y, x) = 1.0f + ratio * accumx; 
-	}
-	*/
-
-	//	abs(jc[(x+3)+0] - jc[x+0]);
-
-	//v
-	//	abs(jp[x+0]     - jc[x+0]); 
-	/*
-	for(int y=0; y<height-1; y++)
-	{
-	uchar* jc = joint.ptr<uchar>(y);
-	uchar* jp = joint.ptr<uchar>(y+1);
-	float* dxp = dx.ptr<float>(y);
-	float* dyp = dy.ptr<float>(y);
-
-	int x=0;
-	const __m128i zero = _mm_setzero_si128();
-	const __m128 ones = _mm_set1_ps(1.f);
-	const __m128 mratio = _mm_set1_ps(ratio);
-
-	for(; x<=width-1; x+=16)
-	{
-	a = _mm_shuffle_epi8(_mm_loadu_si128((__m128i*)(jc+3*x)),mask1);
-	b = _mm_shuffle_epi8(_mm_loadu_si128((__m128i*)(jc+3*x+16)),mask2);
-	c = _mm_shuffle_epi8(_mm_loadu_si128((__m128i*)(jc+3*x+32)),mask2);
-
-	__m128i mB = _mm_blendv_epi8(c,_mm_blendv_epi8(b,a,bmask1),bmask2);
-
-	a = _mm_shuffle_epi8(a,smask1);
-	b = _mm_shuffle_epi8(b,smask1);
-	c = _mm_shuffle_epi8(c,ssmask1);
-	__m128i mG = _mm_blendv_epi8(c,_mm_blendv_epi8(b,a,bmask3),bmask2);
-
-
-	a = _mm_shuffle_epi8(a,ssmask1);
-	c = _mm_shuffle_epi8(c,ssmask1);
-	b = _mm_shuffle_epi8(b,ssmask2);
-
-	__m128i mR = _mm_blendv_epi8(c,_mm_blendv_epi8(b,a,bmask3),bmask4);
-
-
-
-	a = _mm_shuffle_epi8(_mm_loadu_si128((__m128i*)(jc+3*(x+1))),mask1);
-	b = _mm_shuffle_epi8(_mm_loadu_si128((__m128i*)(jc+3*(x+1)+16)),mask2);
-	c = _mm_shuffle_epi8(_mm_loadu_si128((__m128i*)(jc+3*(x+1)+32)),mask2);
-
-	__m128i mNB = _mm_blendv_epi8(c,_mm_blendv_epi8(b,a,bmask1),bmask2);
-
-	a = _mm_shuffle_epi8(a,smask1);
-	b = _mm_shuffle_epi8(b,smask1);
-	c = _mm_shuffle_epi8(c,ssmask1);
-	__m128i mNG = _mm_blendv_epi8(c,_mm_blendv_epi8(b,a,bmask3),bmask2);
-
-
-	a = _mm_shuffle_epi8(a,ssmask1);
-	c = _mm_shuffle_epi8(c,ssmask1);
-	b = _mm_shuffle_epi8(b,ssmask2);
-
-	__m128i mNR = _mm_blendv_epi8(c,_mm_blendv_epi8(b,a,bmask3),bmask4);
-
-	a = _mm_shuffle_epi8(_mm_loadu_si128((__m128i*)(jp+3*x)),mask1);
-	b = _mm_shuffle_epi8(_mm_loadu_si128((__m128i*)(jp+3*x+16)),mask2);
-	c = _mm_shuffle_epi8(_mm_loadu_si128((__m128i*)(jp+3*x+32)),mask2);
-
-	__m128i mPB = _mm_blendv_epi8(c,_mm_blendv_epi8(b,a,bmask1),bmask2);
-
-	a = _mm_shuffle_epi8(a,smask1);
-	b = _mm_shuffle_epi8(b,smask1);
-	c = _mm_shuffle_epi8(c,ssmask1);
-	__m128i mPG = _mm_blendv_epi8(c,_mm_blendv_epi8(b,a,bmask3),bmask2);
-
-	a = _mm_shuffle_epi8(a,ssmask1);
-	c = _mm_shuffle_epi8(c,ssmask1);
-	b = _mm_shuffle_epi8(b,ssmask2);
-
-	__m128i mPR = _mm_blendv_epi8(c,_mm_blendv_epi8(b,a,bmask3),bmask4);
-
-	__m128i diff8 = _mm_add_epi8(_mm_subs_epu8(mB,mNB),_mm_subs_epu8(mNR,mB));
-	__m128i diff16_f = _mm_unpackhi_epi8(diff8,zero);
-	__m128i diff16_b = _mm_unpacklo_epi8(diff8,zero);
-
-	diff8 = _mm_add_epi8(_mm_subs_epu8(mG,mNG),_mm_subs_epu8(mNG,mG));
-
-	diff16_f = _mm_add_epi16(diff16_f,_mm_unpackhi_epi8(diff8,zero));
-	diff16_b = _mm_add_epi16(diff16_b,_mm_unpacklo_epi8(diff8,zero));
-
-	diff8 = _mm_add_epi8(_mm_subs_epu8(mR,mNR),_mm_subs_epu8(mNR,mR));
-
-	diff16_f = _mm_add_epi16(diff16_f,_mm_unpackhi_epi8(diff8,zero));
-	diff16_b = _mm_add_epi16(diff16_b,_mm_unpacklo_epi8(diff8,zero));
-
-	__m128i n1 = _mm_unpackhi_epi16(diff16_f,zero);
-	__m128i n2 = _mm_unpacklo_epi16(diff16_f,zero);
-	__m128i n3 = _mm_unpackhi_epi16(diff16_b,zero);
-	__m128i n4 = _mm_unpacklo_epi16(diff16_b,zero);
-
-	__m128 diff0 = _mm_cvtepi32_ps(n2);
-	__m128 diff1 = _mm_cvtepi32_ps(n1);
-	__m128 diff2 = _mm_cvtepi32_ps(n4);
-	__m128 diff3 = _mm_cvtepi32_ps(n3);
-
-	_mm_storeu_ps(dxp+x, _mm_add_ps(ones,_mm_mul_ps(mratio,diff0)));
-	_mm_storeu_ps(dxp+x+4, _mm_add_ps(ones,_mm_mul_ps(mratio,diff1)));
-	_mm_storeu_ps(dxp+x+8, _mm_add_ps(ones,_mm_mul_ps(mratio,diff2)));
-	_mm_storeu_ps(dxp+x+12, _mm_add_ps(ones,_mm_mul_ps(mratio,diff3)));
-
-
-
-	/////v
-	diff8 = _mm_add_epi8(_mm_subs_epu8(mB,mPB),_mm_subs_epu8(mPR,mB));
-	diff16_f = _mm_unpackhi_epi8(diff8,zero);
-	diff16_b = _mm_unpacklo_epi8(diff8,zero);
-
-	diff8 = _mm_add_epi8(_mm_subs_epu8(mG,mPG),_mm_subs_epu8(mPG,mG));
-
-	diff16_f = _mm_add_epi16(diff16_f,_mm_unpackhi_epi8(diff8,zero));
-	diff16_b = _mm_add_epi16(diff16_b,_mm_unpacklo_epi8(diff8,zero));
-
-	diff8 = _mm_add_epi8(_mm_subs_epu8(mR,mPR),_mm_subs_epu8(mNR,mR));
-
-	diff16_f = _mm_add_epi16(diff16_f,_mm_unpackhi_epi8(diff8,zero));
-	diff16_b = _mm_add_epi16(diff16_b,_mm_unpacklo_epi8(diff8,zero));
-
-	n1 = _mm_unpackhi_epi16(diff16_f,zero);
-	n2 = _mm_unpacklo_epi16(diff16_f,zero);
-	n3 = _mm_unpackhi_epi16(diff16_b,zero);
-	n4 = _mm_unpacklo_epi16(diff16_b,zero);
-
-	diff0 = _mm_cvtepi32_ps(n2);
-	diff1 = _mm_cvtepi32_ps(n1);
-	diff2 = _mm_cvtepi32_ps(n4);
-	diff3 = _mm_cvtepi32_ps(n3);
-
-	_mm_storeu_ps(dyp+x, _mm_add_ps(ones,_mm_mul_ps(mratio,diff0)));
-	_mm_storeu_ps(dyp+x+4, _mm_add_ps(ones,_mm_mul_ps(mratio,diff1)));
-	_mm_storeu_ps(dyp+x+8, _mm_add_ps(ones,_mm_mul_ps(mratio,diff2)));
-	_mm_storeu_ps(dyp+x+12, _mm_add_ps(ones,_mm_mul_ps(mratio,diff3)));
-	}
-
-	for(; x<width-1; x++)
-	{
-	int accumx = 0;
-	int accumy = 0;
-	for(int c=0; c<dim; c++)
-	{
-	accumx += abs(jc[(x+1)*dim+c] - jc[x*dim+c]); 
-	accumy += abs(jp[x*dim+c]     - jc[x*dim+c]); 
-	}
-	dxp[x]= 1.0f + ratio * accumx; 
-	dyp[x]= 1.0f + ratio * accumy; 
-	}
-	int accumy = 0;
-	x = width -1;
-	for(int c=0; c<dim; c++)
-	{
-	accumy += abs(jp[x*dim+c] - jc[x*dim+c]); 
-	}
-	dyp[x]= 1.0f + ratio * accumy; 	
-	}*/
-
-	//#pragma omp parallel for
-	for(int y=0; y<height-1; y++)
-	{
-		uchar* jc = joint.ptr<uchar>(y);
-		uchar* jp = joint.ptr<uchar>(y+1);
-		float* dxp = dx.ptr<float>(y);
-		float* dyp = dy.ptr<float>(y);
-
-		for(int x=0; x<width-1; x++)
-		{
-			int accumx = 0;
-			int accumy = 0;
-			for(int c=0; c<dim; c++)
-			{
-				accumx += abs(jc[(x+1)*dim+c] - jc[x*dim+c]); 
-				accumy += abs(jp[x*dim+c]     - jc[x*dim+c]); 
-			}
-			dxp[x]= 1.0f + ratio * accumx; 
-			dyp[x]= 1.0f + ratio * accumy; 
-		}
-		int accumy = 0;
-		int x = width -1;
-		for(int c=0; c<dim; c++)
-		{
-			accumy += abs(jp[x*dim+c] - jc[x*dim+c]); 
-		}
-		dyp[x]= 1.0f + ratio * accumy; 	
-	}
-
-
-	int y = height-1;
-	for(int x=0; x<width-1; x++)
-	{
-		int accumx = 0;
-		for(int c=0; c<dim; c++)
-		{
-			accumx += abs(joint.at<uchar>(y, (x+1)*dim+c) - joint.at<uchar>(y, x*dim+c)); 
-		}
-		dx.at<float>(y, x) = 1.0f + ratio * accumx; 
-	}
-}
 
 /*
 void buid_ct_L_8u(const Mat& src, Mat& ct_x, Mat& ct_y, const float ratio, int th)
@@ -2331,6 +2075,84 @@ void cunsum_32f(Mat& inplace)
 	}
 }
 
+void buid_dxdyL1_8u(const Mat& src, Mat& dx, Mat& dy, const float ratio)
+{
+	int width = src.cols;
+	int height = src.rows;
+	int dim = src.channels();
+
+	Mat joint = src;
+
+	if(dim==1)
+	{
+		for(int y=0; y<height-1; y++)
+		{
+			uchar* jc = joint.ptr<uchar>(y);
+			uchar* jp = joint.ptr<uchar>(y+1);
+			float* dxp = dx.ptr<float>(y);
+			float* dyp = dy.ptr<float>(y);
+
+			for(int x=0; x<width-1; x++)
+			{
+				dxp[x]= 1.0f + ratio * abs(jc[x+1] - jc[x]); 
+				dyp[x]= 1.0f + ratio * abs(jp[x]   - jc[x]); 
+			}
+			int accumy = 0;
+			int x = width -1;
+
+			dyp[x]= 1.0f + ratio * abs(jp[x] - jc[x]); 	
+		}
+
+		int y = height-1;
+		for(int x=0; x<width-1; x++)
+		{
+			dx.at<float>(y, x) = 1.0f + ratio * abs(joint.at<uchar>(y, (x+1)) - joint.at<uchar>(y, x)); 
+		}
+	}
+	else
+	{
+		for(int y=0; y<height-1; y++)
+		{
+			uchar* jc = joint.ptr<uchar>(y);
+			uchar* jp = joint.ptr<uchar>(y+1);
+			float* dxp = dx.ptr<float>(y);
+			float* dyp = dy.ptr<float>(y);
+
+			for(int x=0; x<width-1; x++)
+			{
+				int accumx = 0;
+				int accumy = 0;
+				for(int c=0; c<dim; c++)
+				{
+					accumx += abs(jc[(x+1)*dim+c] - jc[x*dim+c]); 
+					accumy += abs(jp[x*dim+c]     - jc[x*dim+c]); 
+				}
+				dxp[x]= 1.0f + ratio * accumx; 
+				dyp[x]= 1.0f + ratio * accumy; 
+			}
+			int accumy = 0;
+			int x = width -1;
+			for(int c=0; c<dim; c++)
+			{
+				accumy += abs(jp[x*dim+c] - jc[x*dim+c]); 
+			}
+			dyp[x]= 1.0f + ratio * accumy; 	
+		}
+
+
+		int y = height-1;
+		for(int x=0; x<width-1; x++)
+		{
+			int accumx = 0;
+			for(int c=0; c<dim; c++)
+			{
+				accumx += abs(joint.at<uchar>(y, (x+1)*dim+c) - joint.at<uchar>(y, x*dim+c)); 
+			}
+			dx.at<float>(y, x) = 1.0f + ratio * accumx; 
+		}
+	}
+}
+
 void buid_dxdyL2_8u(const Mat& src, Mat& dx, Mat& dy, const float ratio)
 {
 	int width = src.cols;
@@ -2339,47 +2161,77 @@ void buid_dxdyL2_8u(const Mat& src, Mat& dx, Mat& dy, const float ratio)
 
 	Mat joint = src;
 	const float ratio2 = ratio*ratio;
-	for(int y=0; y<height-1; y++)
-	{
-		uchar* jc = joint.ptr<uchar>(y);
-		uchar* jp = joint.ptr<uchar>(y+1);
-		float* dxp = dx.ptr<float>(y);
-		float* dyp = dy.ptr<float>(y);
 
+	/*if(dim==1)
+	{
+		for(int y=0; y<height-1; y++)
+		{
+			uchar* jc = joint.ptr<uchar>(y);
+			uchar* jp = joint.ptr<uchar>(y+1);
+			float* dxp = dx.ptr<float>(y);
+			float* dyp = dy.ptr<float>(y);
+
+			for(int x=0; x<width-1; x++)
+			{
+				dxp[x]= sqrt(ratio2 + ratio2 * (jc[x+1] - jc[x])*(jc[x+1] - jc[x])); 
+				dyp[x]= sqrt(ratio2 + ratio2 * (jp[x]   - jc[x])*(jp[x]   - jc[x])); 
+			}
+			int accumy = 0;
+			int x = width -1;
+
+			dyp[x]= sqrt(ratio2 + ratio2 * (jp[x] - jc[x])*(jp[x] - jc[x])); 	
+		}
+
+		int y = height-1;
+		for(int x=0; x<width-1; x++)
+		{
+			dx.at<float>(y, x) = sqrt(ratio2 + ratio2 * (joint.at<uchar>(y, (x+1)) - joint.at<uchar>(y, x))*(joint.at<uchar>(y, (x+1)) - joint.at<uchar>(y, x))); 
+		}
+	}
+	else*/
+	{
+		for(int y=0; y<height-1; y++)
+		{
+			uchar* jc = joint.ptr<uchar>(y);
+			uchar* jp = joint.ptr<uchar>(y+1);
+			float* dxp = dx.ptr<float>(y);
+			float* dyp = dy.ptr<float>(y);
+
+			for(int x=0; x<width-1; x++)
+			{
+				int accumx = 0;
+				int accumy = 0;
+				for(int c=0; c<dim; c++)
+				{
+					int v = (jc[(x+1)*dim+c] - jc[x*dim+c]);
+					accumx += v*v; 
+					v = (jp[x*dim+c]     - jc[x*dim+c]);
+					accumy += v*v; 
+				}
+				dxp[x]= sqrt(ratio2 + ratio2 * accumx); 
+				dyp[x]= sqrt(ratio2 + ratio2 * accumy); 
+			}
+			int accumy = 0;
+			int x = width -1;
+			for(int c=0; c<dim; c++)
+			{
+				int v = (jp[x*dim+c] - jc[x*dim+c]);
+				accumy +=v*v; 
+			}
+			dyp[x]= sqrt(ratio2 + ratio2 * accumy); 
+		}
+
+		int y = height-1;
 		for(int x=0; x<width-1; x++)
 		{
 			int accumx = 0;
-			int accumy = 0;
 			for(int c=0; c<dim; c++)
 			{
-				int v = (jc[(x+1)*dim+c] - jc[x*dim+c]);
+				int v = (joint.at<uchar>(y, (x+1)*dim+c) - joint.at<uchar>(y, x*dim+c));
 				accumx += v*v; 
-				v = (jp[x*dim+c]     - jc[x*dim+c]);
-				accumy += v*v; 
 			}
-			dxp[x]= sqrt(ratio2 + ratio2 * accumx); 
-			dyp[x]= sqrt(ratio2 + ratio2 * accumy); 
+			dx.at<float>(y, x) = sqrt(ratio2 + ratio2 * accumx); 
 		}
-		int accumy = 0;
-		int x = width -1;
-		for(int c=0; c<dim; c++)
-		{
-			int v = (jp[x*dim+c] - jc[x*dim+c]);
-			accumy +=v*v; 
-		}
-		dyp[x]= sqrt(ratio2 + ratio2 * accumy); 
-	}
-
-	int y = height-1;
-	for(int x=0; x<width-1; x++)
-	{
-		int accumx = 0;
-		for(int c=0; c<dim; c++)
-		{
-			int v = (joint.at<uchar>(y, (x+1)*dim+c) - joint.at<uchar>(y, x*dim+c));
-			accumx += v*v; 
-		}
-		dx.at<float>(y, x) = sqrt(ratio2 + ratio2 * accumx); 
 	}
 }
 
@@ -2579,6 +2431,74 @@ void powMat(const float a , Mat& src, Mat & dest)
 /////////////////////////////////////////////////////////////////////////////////////////
 //for base implimentation of recursive implimentation
 // Recursive filter for vertical direction
+
+void recursiveFilterPowVerticalGraySSE(cv::Mat& out, cv::Mat& dct, float a) 
+{
+
+	int width = out.cols;
+	int height = out.rows;
+	int dim = out.channels();
+	int x=0;
+
+		const __m128 ma = _mm_set1_ps(a);
+	for(x=0; x<=width-4; x+=4)
+	{
+		const __m128 ones = _mm_set1_ps(1.f);
+		for(int y=1; y<height; y++)
+		{
+			float* pdct = dct.ptr<float>(y-1);
+
+			float* puout = out.ptr<float>(y-1);
+			float* pout = out.ptr<float>(y);
+
+			//float p = dct.at<float>(y-1, x);
+			__m128 mp = _mm_loadu_ps(pdct+x);
+			mp = _mm_pow_ps(ma, mp);
+			__m128 mo = _mm_loadu_ps(pout+x);
+			__m128 muo = _mm_loadu_ps(puout+x);
+
+			//_mm_mul_ps
+			_mm_storeu_ps(pout+x,_mm_add_ps(_mm_mul_ps (_mm_sub_ps(ones,mp), mo), _mm_mul_ps (mp, muo)));
+		}
+
+		for(int y=height-2; y>=0; y--)
+		{
+			float* pdct = dct.ptr<float>(y);
+
+			float* puout = out.ptr<float>(y+1);
+			float* pout = out.ptr<float>(y);
+
+			//float p = dct.at<float>(y-1, x);
+			__m128 mp = _mm_loadu_ps(pdct+x);
+			__m128 mo = _mm_loadu_ps(pout+x);
+			__m128 muo = _mm_loadu_ps(puout+x);
+
+			//_mm_mul_ps
+			_mm_storeu_ps(pout+x,_mm_add_ps(_mm_mul_ps (_mm_sub_ps(ones,mp), mo), _mm_mul_ps (mp, muo)));
+
+		}
+	}
+	for(; x<width; x++)
+	{
+		for(int y=1; y<height; y++)
+		{
+			float p = dct.at<float>(y-1, x);
+			for(int c=0; c<dim; c++)
+			{
+				out.at<float>(y, x*dim+c) = (1.f - p) * out.at<float>(y, x*dim+c) + p * out.at<float>(y-1, x*dim+c);
+			}
+		}
+
+		for(int y=height-2; y>=0; y--)
+		{
+			float p = dct.at<float>(y, x);
+			for(int c=0; c<dim; c++)
+			{
+				out.at<float>(y, x*dim+c) = p * out.at<float>(y+1, x*dim+c) + (1.f - p) * out.at<float>(y, x*dim+c);
+			}
+		}
+	}
+}
 
 void recursiveFilterVerticalGraySSE(cv::Mat& out, cv::Mat& dct) 
 {
@@ -2789,7 +2709,7 @@ void domainTransformFilter_RF_GRAY_SSE_SINGLE(const Mat& src, const Mat& guide, 
 	int i=maxiter;
 	Mat amat,amat2;
 
-	Mat dctxt;transpose(dctx,dctxt);
+//	Mat dctxt;transpose(dctx,dctxt);
 	Mat temp;
 	while(i--)
 	{
@@ -2797,19 +2717,17 @@ void domainTransformFilter_RF_GRAY_SSE_SINGLE(const Mat& src, const Mat& guide, 
 		float a = (float)exp(-sqrt(2.0) / sigma_h);
 
 		// and a = exp(-sqrt(2) / sigma_H) to the power of "dct"
-		//powMat(a,dctx, amat);
 		pow_fmath(a,dctx, amat);
 		recursiveFilterHorizontalGray(img, amat);
 
-		/*transpose(img,temp);
-		pow_fmath(a,dctxt, amat);
-		recursiveFilterVerticalBGR(temp, amat);
-		transpose(temp,img);*/
-
-
-		//powMat(a,dcty, amat2);
 		pow_fmath(a,dcty, amat2);
 		recursiveFilterVerticalGraySSE(img, amat2);
+		// transpose approach
+		//transpose(img,temp);
+		//pow_fmath(a,dctxt, amat);
+		//recursiveFilterVerticalGraySSE(temp, amat);
+		//transpose(temp,img);
+
 	}
 	//out.convertTo(dest,src.type(),1.0,0.5);
 	img.convertTo(dest,src.type(), 1.0, 0.5);
@@ -2897,6 +2815,11 @@ void domainTransformFilterRF(const Mat& src, Mat& dst, float sigma_r, float sigm
 {
 	domainTransformFilterRF(src,src,dst,sigma_r,sigma_s,maxiter,norm,implementation);
 }
+
+
+///////////////////////////////////////////////////////////////////////////////
+//IC
+///////////////////////////////////////////////////////////////////////////////
 
 void interpolatedConvolutionX_32f(const Mat& src_,Mat& dest,const float radius, const Mat& ctx_)
 {
@@ -3057,9 +2980,9 @@ void interpolatedConvolutionX_32f(const Mat& src_,Mat& dest,const float radius, 
 						);
 
 				L = Vec3f(
-						0.5f*(yi.val[0]+s[3*(i)+0])*(1.0-a)*(dx[i]-dx[i-1]),
-						0.5f*(yi.val[1]+s[3*(i)+1])*(1.0-a)*(dx[i]-dx[i-1]),
-						0.5f*(yi.val[2]+s[3*(i)+2])*(1.0-a)*(dx[i]-dx[i-1])
+						0.5f*(yi.val[0]+s[3*(i)+0])*(1.f-a)*(dx[i]-dx[i-1]),
+						0.5f*(yi.val[1]+s[3*(i)+1])*(1.f-a)*(dx[i]-dx[i-1]),
+						0.5f*(yi.val[2]+s[3*(i)+2])*(1.f-a)*(dx[i]-dx[i-1])
 						);
 				Lr = dx[i];
 
@@ -3664,7 +3587,9 @@ void domainTransformFilterNC(const Mat& src, Mat& dst, float sigma_r, float sigm
 	domainTransformFilterNC(src,src,dst,sigma_r,sigma_s,maxiter,norm,implementation);
 }
 
-
+///////////////////////////////////////////////////////////////////////////////
+//IC
+////////////////////////////////////////////////////////////////////////////////
 // Domain transform filtering: baseline implimentation for optimization
 void domainTransformFilter_IC_Base(const Mat& src, const Mat& guide, Mat& dest, float sigma_r, float sigma_s, int maxiter, int norm)
 {
@@ -3752,7 +3677,7 @@ void domainTransformFilterIC(const Mat& src, Mat& dst, float sigma_r, float sigm
 
 
 
-void domainTransformFilter(InputArray srcImage, InputArray guideImage, OutputArray destImage, float sigma_r, float sigma_s, int maxiter, int norm, int convolutionType, int implementation)
+void domainTransformFilter(InputArray srcImage, InputArray guideImage, OutputArray destImage, const float sigma_r, const float sigma_s, const int maxiter, const int norm, const int convolutionType, const int implementation)
 {
 	Mat src = srcImage.getMat();
 	if(destImage.empty())destImage.create(src.size(),src.type());
@@ -3769,7 +3694,7 @@ void domainTransformFilter(InputArray srcImage, InputArray guideImage, OutputArr
 	
 }
 
-void domainTransformFilter(InputArray srcImage, OutputArray destImage, float sigma_r, float sigma_s, int maxiter, int norm, int convolutionType, int implementation)
+void domainTransformFilter(InputArray srcImage, OutputArray destImage, const float sigma_r, const float sigma_s, const int maxiter, const int norm, const int convolutionType, const int implementation)
 {
 	domainTransformFilter(srcImage,srcImage,destImage,sigma_r,sigma_s,maxiter,norm, convolutionType, implementation);
 }

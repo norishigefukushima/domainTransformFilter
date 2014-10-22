@@ -30,8 +30,8 @@ typedef enum
 }DTF_IMPLEMENTATION;
 
 
-void domainTransformFilter(InputArray srcImage, OutputArray destImage, float sigma_r, float sigma_s, int maxiter, int norm=DTF_L1, int convolutionType=DTF_RF, int implementation=DTF_SLOWEST);
-void domainTransformFilter(InputArray srcImage, InputArray guideImage, OutputArray destImage, float sigma_r, float sigma_s, int maxiter, int norm=DTF_L1, int convolutionType=DTF_RF, int implementation=DTF_SLOWEST);
+void domainTransformFilter(InputArray srcImage, OutputArray destImage, const float sigma_r, const float sigma_s, const int maxiter, const int norm=DTF_L1, const int convolutionType=DTF_RF, const int implementation=DTF_SLOWEST);
+void domainTransformFilter(InputArray srcImage, InputArray guideImage, OutputArray destImage, const float sigma_r, const float sigma_s, const int maxiter, const int norm=DTF_L1, const int convolutionType=DTF_RF, const int implementation=DTF_SLOWEST);
 
 
 void cvtColorBGR2PLANE(const Mat& src, Mat& dest);
