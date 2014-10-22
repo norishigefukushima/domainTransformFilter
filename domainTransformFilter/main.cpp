@@ -14,28 +14,21 @@ using namespace std;
 
 	int sc = 500;
 	int ss = 30;
-	int iteration = 3;
-
+	int iteration = 2;
 	
 	createTrackbar("sigma_color",wname,&sc,2550);
 	createTrackbar("sigma_space",wname,&ss,100);
 	createTrackbar("iteration",wname,&iteration,10);
-
 	int norm = 0;
 	createTrackbar("normL1/L2",wname,&norm,1);
 	int implimentation=0;
 	createTrackbar("impliment",wname,&implimentation,2);
-
 	int sw=0;
 	createTrackbar("RF/NC/IC",wname,&sw,2);
-
 	int color = 0;
 	createTrackbar("color",wname,&color,1);
 
 	int key = 0;
-
-	
-//	Mat c;cvtColor(src,c,CV_GRAY2BGR);
 	while(key!='q' && key!=VK_ESCAPE)
 	{
 		float scf = sc*0.1f;
@@ -76,18 +69,15 @@ using namespace std;
 
 	 int sc = 500;
 	 int ss = 30;
-	 int iteration = 3;
-
+	 int iteration = 2;
 
 	 createTrackbar("sigma_color",wname,&sc,2550);
 	 createTrackbar("sigma_space",wname,&ss,100);
 	 createTrackbar("iteration",wname,&iteration,10);
-
 	 int norm = 0;
 	 createTrackbar("normL1/L2",wname,&norm,1);
 	 int implimentation=0;
 	 createTrackbar("impliment",wname,&implimentation,2);
-
 	 int sw=0;
 	 createTrackbar("RF/NC/IC",wname,&sw,5);
 
@@ -95,9 +85,6 @@ using namespace std;
 	 createTrackbar("color",wname,&color,1);
 
 	 int key = 0;
-
-
-	 //	Mat c;cvtColor(src,c,CV_GRAY2BGR);
 	 while(key!='q' && key!=VK_ESCAPE)
 	 {
 		 float scf = sc*0.1f;
