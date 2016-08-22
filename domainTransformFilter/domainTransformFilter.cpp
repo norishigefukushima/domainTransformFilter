@@ -1,9 +1,4 @@
 #include "domainTransformFilter.h"
-#include <opencv2/core/internal.hpp>
-//
-
-	//
-
 
 inline int pow2(int x)
 {

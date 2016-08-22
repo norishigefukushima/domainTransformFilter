@@ -2,11 +2,7 @@
 
 #include <opencv2/opencv.hpp>
 using namespace cv;
-#define CV_VERSION_NUMBER CVAUX_STR(CV_MAJOR_VERSION) CVAUX_STR(CV_MINOR_VERSION) CVAUX_STR(CV_SUBMINOR_VERSION)
-
-#pragma comment(lib, "opencv_core"CV_VERSION_NUMBER".lib")
-#pragma comment(lib, "opencv_imgproc"CV_VERSION_NUMBER".lib")
-
+using namespace std;
 
 typedef enum
 {
